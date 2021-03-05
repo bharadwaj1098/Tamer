@@ -4,12 +4,12 @@ import numpy as np
 
 class DeepQNetwork(object):
     def __init__(self, lr, n_actions, name, fc1_dims=1024,
-                 input_dims=(210,160,4), chkpt_dir='tmp/dqn'):
+                 input_dims=(160,160,2), chkpt_dir='tmp/dqn'):
         self.lr = lr
         self.n_actions = n_actions
         self.name = name
         self.fc1_dims = fc1_dims
-        self.chkpt_dir = chkpt_dir
+        self.chkpt_dir = chkpt_dir 
         self.input_dims = input_dims
         self.sess = tf.Session()
         self.build_network()
