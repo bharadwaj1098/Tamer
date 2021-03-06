@@ -48,3 +48,7 @@ class decoder(nn.module):
     
     def __init__(self):
         super(decoder, self).__init()
+'''
+Deconvolution
+yet to be done
+'''
