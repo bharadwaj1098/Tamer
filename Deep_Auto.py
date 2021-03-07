@@ -66,7 +66,6 @@ class Random_Agent:
         self.state_size_w = environment.observation_space.shape[1]
         self.state_size_c = environment.observation_space.shape[2]
 
-        # Activation size for breakout env. Used as output size in network
         self.action_size = environment.action_space.n
 
         # Image pre process params
