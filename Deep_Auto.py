@@ -2,6 +2,7 @@ import torch as T
 import torch.nn as nn 
 import torch.nn.functional as F 
 import torch.optim as optim 
+
 import warnings 
 warnings.filterwarnings("ignore") 
 
@@ -58,12 +59,6 @@ class decoder(nn.Module):
         x = self.deconv_bn2(self.deconv_3(self.upsample_1(x)))
         
         return x
-
-x = T.rand((2,3,160,160)) 
-e = encoder()
-d = decoder()
-d(e(x))  
-
 
 class Random_Agent:
     def __init__(self, env):
