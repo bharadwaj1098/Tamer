@@ -62,11 +62,11 @@ class decoder(nn.Module):
 
 class Random_Agent:
     def __init__(self, env):
-        self.state_size_h = environment.observation_space.shape[0]
-        self.state_size_w = environment.observation_space.shape[1]
-        self.state_size_c = environment.observation_space.shape[2]
+        self.state_size_h = env.observation_space.shape[0]
+        self.state_size_w = env.observation_space.shape[1]
+        self.state_size_c = env.observation_space.shape[2]
 
-        self.action_size = environment.action_space.n
+        self.action_size = env.action_space.n
 
         # Image pre process params
         self.target_h = 160  # Height after process

@@ -8,3 +8,4 @@ from Deep_Auto import encoder
 
 env = gym.make("Bowling-v0")
 
+print(env.observation_space.shape)
