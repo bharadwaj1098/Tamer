@@ -171,7 +171,9 @@ if __name__ = '__main__':
         state = agent.get_state()
         for step in range(count):
             action = agent.select_action()
-            
+            '''
+            having problem writing thew loss function
+            '''
             if agent.take_action(action) = True:
                 agent.close()
             else:
