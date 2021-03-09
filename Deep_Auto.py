@@ -1,10 +1,16 @@
+'''
+import gym
+import numpy as np 
+import time
+import random
+import cv2
+import warnings 
+warnings.filterwarnings("ignore") 
+
 import torch as T 
 import torch.nn as nn 
 import torch.nn.functional as F 
 import torch.optim as optim 
-
-import warnings 
-warnings.filterwarnings("ignore") 
 
 class encoder(nn.Module):
     def __init__(self):
@@ -30,10 +36,8 @@ class encoder(nn.Module):
 
         return x
 
-class decoder(nn.Module):
-    '''
-    Linear - Reshape - Upsample - Deconv + BatchNorm 
-    '''
+class decoder(nn.Module):#Linear - Reshape - Upsample - Deconv + BatchNorm 
+    
     def __init__(self):
         super(decoder, self).__init__()
 
@@ -71,4 +75,35 @@ class Random_Agent:
         # Image pre process params
         self.target_h = 160  # Height after process
         self.target_w = 160  # Widht after process 
+
+
+  
+env = gym.make("Bowling-v0")
+
+#print()
+env.action_space()
+
+'''
+import gym
+import matplotlib.pyplot as plt
+#%matplotlib inline
+
+env = gym.make('CartPole-v0')
+env.reset() 
+for i_episode in range(20):
+    observation = env.reset()
+    for t in range(100):
+        #env.render()
+        #print(observation)
+        plt.imshow(env.render(mode='rgb_array'))
+        display.display(plt.gcf())
+        display.clear_output(wait=True)
+        #action = env.action_space.sample()
+        action = env.action_space.sample()
+        observation, reward, done, info = env.step(action)
+        if done:
+            print("Episode finished after {} timesteps".format(t+1))
+            break
+
+env.close()
 
