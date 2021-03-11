@@ -172,8 +172,7 @@ if __name__ = '__main__':
         for step in range(count):
             action = agent.select_action()
             '''
-            having problem writing thew loss functionaETQR1R:WQ
-            
+            having problem writing the loss function
             '''
             if agent.take_action(action) = True:
                 agent.close()
@@ -181,3 +180,7 @@ if __name__ = '__main__':
                 next_state = agent.get_state()
                 state = next_state
             
+        
+        "
+        here calculate the loss 
+        "
