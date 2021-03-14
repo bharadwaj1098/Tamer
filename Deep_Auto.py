@@ -34,8 +34,6 @@ class encoder(nn.Module):
         self.conv_bn2 = nn.BatchNorm2d(1)
         
         self.linear_1 = nn.Linear(64, 100)
-
-        self.optimizer = optim.Adam(self.parameters(), lr= 0.001)  
         
     def forward(self, x):
         x = x
@@ -64,8 +62,6 @@ class decoder(nn.Module):
         self.deconv_bn1 = nn.BatchNorm2d(64)
         self.deconv_bn2 = nn.BatchNorm2d(3)  
 
-        self.optimizer = optim.Adam(self.parameters(), lr= 0.001)
-
     def forward(self,x):
         x = x
         x = F.relu(self.linear_1(x))  
@@ -91,8 +87,6 @@ class Network(nn.Module):
         self.linear_2 = nn.Linear(100,16)
         self.linear_3 = nn.Linear(16,4)
 
-        self.optimizer = optim.Adam(self.parameters(), lr= 0.001)
-
     def forward(self, x):
         x = x
         x = F.max_pool2d(self.conv_bn1(self.conv1(x)), 2) 
@@ -105,6 +99,7 @@ class Network(nn.Module):
         x = self.linear_3(x)
         return x
 '''
+
 Results = namedtuple(
     'Results',
     ('original', 'output')
@@ -209,6 +204,9 @@ if __name__ == "__main__":
         decoder_optimizer.step()
         encoder_optimizer.step()
         
+    torch.save(encoder, "encoder")
+    torch.save(decoder, "decoder")
+
 
 
 
