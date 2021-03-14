@@ -14,6 +14,14 @@ import torch.nn.functional as F
 import torchvision.transforms as T 
 import torch.optim as optim 
 
+env = gym.make("Bowling-v0").unwrapped 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+n_actions = env.action_space.n
+no_of_episodes = 10000
+batch_size = 128
+buffer_capacity = 1000
+no_of_steps = 300
+
 class encoder(nn.Module):
     def __init__(self):
         super(encoder, self).__init__()
@@ -67,10 +75,10 @@ class decoder(nn.Module):
         x = self.deconv_bn1(self.deconv_2(self.upsample_2(x)))
         x = self.deconv_bn2(self.deconv_3(self.upsample_1(x))) 
         return x
-
-class policynet(nn.Module):
+'''
+class Network(nn.Module):
     def __init__(self):
-        super(policynet, self).__init__()
+        super(Network, self).__init__()
         
         self.conv1 = nn.Conv2d(3, 64, 3)
         self.conv2 = nn.Conv2d(64, 64, 3)
@@ -96,111 +104,111 @@ class policynet(nn.Module):
         x = self.linear_2(x)
         x = self.linear_3(x)
         return x
-
-Experience = namedtuple(
-    'Experience',
-    ('state', 'action', 'next_state', 'reward')
+'''
+Results = namedtuple(
+    'Results',
+    ('original', 'output')
 )
 
-class ReplayMemory():
+class Buffer():
     def __init__(self, capacity):
-        self.capacity = capacity
+        self.capacity = capacity 
         self.memory = []
         self.push_count = 0
     
-    def push(self, experience):
-        if len(self.memory) < self.capacity:
-            self.memory.append(experience)
+    def push(self, Results):
+        if len(self.memory)< self.capacity:
+            self.memory.append(Results)
         else:
-            self.memory[self.push_count % self.capacity] = experience
-        self.push_count +=1 
-    
-    def sample(self, batch_size):
-        return random.sample(self.memory, batch_size) 
-    
-    def can_provide_sample(self, batch_size):
-        return len(self.memory) >= batch_size
+            self.memory[self.push_count % self.capacity] = Results 
+        self.push_count += 1
 
-class EpsilonGreedy():
-    def __init__(self, start, end, decay):
-        self.start = start
-        self.end = end 
-        self.decay = decay 
+    def random_sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
     
-    def get_exploration_rate(self, current_step):
-        rate = self.end + (self.start - self.end) * \
-            math.exp(-1. * current_step * self.decay)
-        return rate
-
-class Agent():
-    def __init__(self, strategy,num_actions,device):
-        self.current_step = 0
-        self .strategy = strategy
-        self.num_actions = num_actions
-        self.device = device 
+    def can_sample(self, batch_size):
+        return len(self.memory) >= batch_size 
     
-    def select_action(self, state, policy_net):
-        rate = strategy.get_exploration_rate(self.current_step)
-        self.current_step += 1
-        if rate > random.random():
-            return random.randrange(self.num_actions)
-        else:
-            with torch.no_grad():
-                return policy_net(state).argmax(dim =1).item()
+    def empty(self):
+        self.memory.clear()
 
-class env_manager():
-    def __init__(self, device):
-        self.env = gym.make("Bowling-v0").unwrapped
-        self.env.reset()
-        self.device = device 
-        self.done = False
-    
-    def get_state(self):
-        screen = self.render(mode = "rgb_array").transpose((2,0,1))
-        screen = np.ascontiguousarray(screen, dtype = np.float32)/255
-        screen = torch.from_numpy(screen)
-        resize = T.Compose([T.ToPILImage(),
-                            T.Resize( ??, interpolation = Image.CUBIC),
-                            T.ToTensor()])
-        screen = resize(screen).unsqueeze(0).to(self.device) 
-        
+def select_action():
+    action = torch.tensor([[random.randrange(n_actions)]], device = device, dtype = torch.long)
+    return action
 
-'''
-if __name__ == '__main__':
+def get_screen():
+    screen = env.render(mode = "rgb_array").transpose((2,0,1))
+    screen = np.ascontiguousarray(screen, dtype = np.float32)/255
+    screen = torch.from_numpy(screen)
+    resize = T.Compose([T.ToPILImage(),
+                        T.Resize((160, 160)),
+                        T.ToTensor()])
+    screen = resize(screen).unsqueeze(0).to(device)
+    return screen 
 
-    no_episodes = 100000
-    count = 100
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def change_to_image(img):
+    img = np.array(img.squeeze(0).permute(1, 2, 0)) 
+    return img
+
+def MSE(imageA, imageB):
+    err = np.sum((imageA.astype("float") - imageB.astype("float")) ** 2)
+    err /= float(imageA.shape[0] * imageA.shape[1])
+    return err  
+
+def loss(dataloader):
+    M = len(dataloader)
+    sum_of_all = 0
+    for i in range(M):
+        #original = i[0] and output_of_nn = i[1]
+        error = MSE(change_to_image(i[0]), change_to_image(i[1]))
+        sum_of_all = sum_of_all + error
+    loss = sum_of_all/M 
+    loss = torch.tensor([loss], device=device)
+    return loss 
+     
+if __name__ == "__main__":
+
+    buffer = Buffer(buffer_capacity)
     encoder = encoder()
     decoder = decoder()
-    agent = Random_Agent(device)
-    decoder_optimizer = optim.RMSprop(decoder.parameters(), lr=1e-4, alpha=0.99, eps=1e-8, 
-                                weight_decay=0.0005, momentum=0.9)
-    encoder_optimizer = optim.RMSprop(decoder.parameters(), lr=1e-4, alpha=0.99, eps=1e-8, 
-                                weight_decay=0.0005, momentum=0.9) 
 
-    for episode in range(no_episodes):
-        agent.reset()
-        state = agent.get_state()
-        state = state.cuda()
-        for step in range(count):
-            action = agent.select_action()
-            encoder_output = encoder(state.cuda())
-            decoder_output = decoder(encoser_output)
-            diff = (state - decoder_output)**2
-            diff = np.array(diff)
-            summed = np.sum(diff)
-            loss_contrastive = torch.tensor(summed/(160**2) )
-            loss_contrastive.backward()
-            optimizer.step()
+    encoder.to(device)
+    decoder.to(device)
 
-            if agent.take_action(action) == True:
-                agent.close()
+    encoder_optimizer = optim.Adam(encoder.parameters(), lr=1e-3)
+    decoder_optimizer = optim.Adam(decoder.parameters(), lr=1e-3)
+
+    for episode in range(no_of_episodes):
+        env.reset()
+        last_screen = get_screen()
+        current_screen = get_screen()
+        state = current_screen - last_screen
+        encoder_optimizer.zero_grad() 
+        decoder_optimizer.zero_grad() 
+        for step in range(no_of_steps):
+            action = select_action() 
+            _, _, done, _ = env.step(action.item())
+            last_screen = current_screen
+            current_screen = get_screen()
+            if not done:
+                next_state = current_screen - last_screen
             else:
-                next_state = agent.get_state()
-                state = next_state.cuda() 
+                next_state = None 
+            output = decoder(encoder(state))
+            buffer.push((state, output))
+            state = next_state
+        if buffer.can_sample(batch_size): 
+            dataloader = buffer.random_sample(batch_size)
+        else:
+            dataloader = buffer.random_sample(len(buffer.memory)) 
+        current_loss = loss(dataloader)
+        if episode % 500 == 0:
+            print("Episode_number = {}\n Current_Loss = {}\n ".format(episode, 
+                                                                    current_loss.item()))
+        current_loss.backward() 
+        decoder_optimizer.step()
+        encoder_optimizer.step()
+        
 
-environment = "Bowling-v0"
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-'''
+
