@@ -18,9 +18,9 @@ env = gym.make("Bowling-v0").unwrapped
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 n_actions = env.action_space.n
 no_of_episodes = 10000
-batch_size = 256
-buffer_capacity = 1000
-no_of_steps = 500
+no_of_steps = 200
+batch_size = 128        
+buffer_capacity = 150
 
 class encoder(nn.Module):
     def __init__(self):
@@ -101,8 +101,8 @@ class Network(nn.Module):
 '''
 
 Results = namedtuple(
-    'Results',
-    ('original', 'output')
+    'ORIGINAL',
+    ('original') 
 )
 
 class Buffer():
@@ -141,29 +141,41 @@ def get_screen():
     screen = resize(screen).unsqueeze(0).to(device)
     return screen 
 
-def change_to_image(img):
-    img = np.array(img.squeeze(0).permute(1, 2, 0)) 
-    return img
+class custom_loss(nn.Module):
+    def __init__(self):
+        super(custom_loss,self).__init__()
+          
+        self.sum_of_all = 0
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def MSE(imageA, imageB):
-    err = np.sum((imageA.astype("float") - imageB.astype("float")) ** 2)
-    err /= float(imageA.shape[0] * imageA.shape[1])
-    return err  
+    def change_to_image(self, img):
+        img = img.permute(1, 2, 0).cpu() 
+        return img
 
-def loss(dataloader):
-    M = len(dataloader)
-    sum_of_all = 0
-    for i in range(M):
-        #original = i[0] and output_of_nn = i[1]
-        error = MSE(change_to_image(i[0]), change_to_image(i[1]))
-        sum_of_all = sum_of_all + error
-    loss = sum_of_all/M 
-    loss = torch.tensor([loss], device=device)
-    return loss 
+    def MSE(self, img1, img2):
+        img1 = img1.data.numpy()
+        img2 = img2.data.numpy()
+        err = np.sum((img1.astype('float') - img2.astype('float')) ** 2)
+        err /= float(img1.shape[0] * img1.shape[1])
+        return err
+      
+    def Forward(self, original, output):
+        M = original.shape[0] 
+        for i in range(M): 
+            x = self.change_to_image(original[i])
+            y = self.change_to_image(output[i])
+            error = self.MSE(x, y)
+            self.sum_of_all = self.sum_of_all + error
+        loss = self.sum_of_all / M
+        loss = torch.tensor([loss], device = self.device, requires_grad = True)
+        return loss 
      
 if __name__ == "__main__":
 
     buffer = Buffer(buffer_capacity)
+    loss = custom_loss()
+    loss_history = []
+
     encoder = encoder()
     decoder = decoder()
 
@@ -180,23 +192,28 @@ if __name__ == "__main__":
         state = current_screen - last_screen
         encoder_optimizer.zero_grad() 
         decoder_optimizer.zero_grad() 
-        for step in range(no_of_steps):
+        Done = False
+        for steps in range(no_of_steps):
             action = select_action() 
-            _, _, done, _ = env.step(action.item())
+            _, _, Done, _ = env.step(action.item())
             last_screen = current_screen
             current_screen = get_screen()
-            if not done:
-                next_state = current_screen - last_screen
-            else:
+            next_state = current_screen - last_screen
+            if Done:
                 next_state = None 
-            output = decoder(encoder(state))
-            buffer.push((state, output))
+            buffer.push((state))
             state = next_state
         if buffer.can_sample(batch_size): 
-            dataloader = buffer.random_sample(batch_size)
+            state_batch = buffer.random_sample(batch_size)
         else:
-            dataloader = buffer.random_sample(len(buffer.memory)) 
-        current_loss = loss(dataloader)
+            state_batch = buffer.random_sample(len(buffer.memory)) 
+        
+        state_batch = torch.stack(state_batch).float() # to convert list to a shape of [batch_size, 1, 3, 160, 160]
+        state_batch = np.squeeze(state_batch, axis = 1) 
+        output_batch = decoder(encoder(state_batch.cuda())) 
+
+        current_loss = loss.Forward(state_batch, output_batch)
+        loss_history.append(current_loss.cpu())
         if episode % 500 == 0:
             print("Episode_number = {}\n Current_Loss = {}\n ".format(episode, 
                                                                     current_loss.item()))
@@ -205,8 +222,8 @@ if __name__ == "__main__":
         encoder_optimizer.step()
         buffer.empty()
 
-    torch.save(encoder, "encoder")
-    torch.save(decoder, "decoder")
+    torch.save(encoder.state_dict(), "encoder")
+    torch.save(decoder.state_dict(), "decoder")
 
 
 
