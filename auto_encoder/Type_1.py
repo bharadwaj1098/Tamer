@@ -3,6 +3,8 @@ import numpy as np
 import time
 import random
 import cv2
+import os 
+import pathlib 
 import matplotlib.pyplot as plt
 import psutil
 import gc
@@ -23,50 +25,55 @@ import torch.nn.functional as F
 import torchvision.transforms as T 
 import torch.optim as optim 
 
-from Autoencoder import Encoder, Decoder, BufferArray, get_gpu_memory_map
+from Autoencoder import Encoder, Decoder, BufferArray  
 
-env = gym.make("Bowling-v0").unwrapped 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-n_actions = env.action_space.n
-no_of_episodes = 5000
-batch_size = 32 
-img_dims = (3, 160, 160)
-agent_histroy = 2
-buffer_size = (20000,) + img_dims  
+'''
+This code is to make autoencoder train till episode is DONE.
+each state is 1 RGB image.
+'''
 
-def select_action():
-    action = torch.tensor([[random.randrange(n_actions)]], device = device, dtype = torch.long)
-    return action
+def main():
 
-def get_screen():
-    screen = env.render(mode = "rgb_array").transpose((2,0,1))
-    screen = np.ascontiguousarray(screen, dtype = np.float32)/255
-    screen = torch.from_numpy(screen)
-    resize = T.Compose([T.ToPILImage(),
-                        T.Resize((img_dims[1:])),
-                        T.ToTensor()])
-    screen = resize(screen).to("cuda")#.unsqueeze(0) 
-    return screen ##Returns Grayscale, PILIMAGE, TENSOR 
+    env = gym.make("Bowling-v0").unwrapped 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    n_actions = env.action_space.n
+    no_of_episodes = 5000
+    batch_size = 32 
+    img_dims = (3, 160, 160) 
+    buffer_size = (20000,) + img_dims  
 
-def get_gpu_memory_map():
-    """Get the current gpu usage.
-    Returns
-    -------
-    usage: dict
-        Keys are device ids as integers.
-        Values are memory usage as integers in MB.
-    """
-    result = subprocess.check_output(
-        [
-            'nvidia-smi', '--query-gpu=memory.used',
-            '--format=csv,nounits,noheader'
-        ], encoding='utf-8')
-    # Convert lines into a dictionary
-    gpu_memory = [int(x) for x in result.strip().split('\n')]
-    gpu_memory_map = dict(zip(range(len(gpu_memory)), gpu_memory))
-    return gpu_memory_map
+    def select_action():
+        action = torch.tensor([[random.randrange(n_actions)]], device = device, dtype = torch.long)
+        return action
 
-if __name__ == "__main__":
+    def get_screen():
+        screen = env.render(mode = "rgb_array").transpose((2,0,1))
+        screen = np.ascontiguousarray(screen, dtype = np.float32)/255
+        screen = torch.from_numpy(screen)
+        resize = T.Compose([T.ToPILImage(),
+                            T.Resize((img_dims[1:])),
+                            T.ToTensor()])
+        screen = resize(screen).to("cuda")#.unsqueeze(0) 
+        return screen ##Returns Grayscale, PILIMAGE, TENSOR 
+
+    def get_gpu_memory_map():
+        """Get the current gpu usage.
+        Returns
+        -------
+        usage: dict
+            Keys are device ids as integers.
+            Values are memory usage as integers in MB.
+        """
+        result = subprocess.check_output(
+            [
+                'nvidia-smi', '--query-gpu=memory.used',
+                '--format=csv,nounits,noheader'
+            ], encoding='utf-8')
+        # Convert lines into a dictionary
+        gpu_memory = [int(x) for x in result.strip().split('\n')]
+        gpu_memory_map = dict(zip(range(len(gpu_memory)), gpu_memory))
+        return gpu_memory_map
+
     # buffer = BufferDeque(buffer_size[0])
     buffer = BufferArray(buffer_size)
     loss_fn = nn.MSELoss(reduction = 'mean')
@@ -76,7 +83,27 @@ if __name__ == "__main__":
     decoder = Decoder().to(device)
 
     opt = optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=1e-4, weight_decay = 1e-1 )
-    
+
+    def image_visual():
+        batch = 3
+        plt.figure(figsize = (25,30))
+        i = buffer.random_sample(batch).to(device)
+        o = decoder(encoder(i))
+
+        interleaved_shape = (len(i) + len(o),) + i.shape[1:]
+        interleaved = torch.empty(interleaved_shape)
+        interleaved[0::2] = i
+        interleaved[1::2] = o
+
+        img_grid = torchvision.utils.make_grid(interleaved, nrow = 2)
+        plt.imshow(img_grid.permute(1,2,0) )
+        plt.savefig(os.path.join(pathlib.Path().absolute() , 'Type_1/result'))
+
+    def loss_visual(x):
+        plt.plot(x)
+        plt.show()
+        plt.savefig(os.path.join(pathlib.Path().absolute() , 'Type_1/loss_history'))
+
     def optimize():
         # Sample batch and preprocess
         state_batch = buffer.random_sample(batch_size)
@@ -122,15 +149,25 @@ if __name__ == "__main__":
                 if step % 16 == 0:
                     loss = optimize()
                     loss_history.append(loss.cpu()) 
+                    '''
                     print("Episode: {} Step: {} Loss: {:5f} GPU Memory: {} RAM: {:5f} Buffer Size: {}".format(
                                         episode, step, loss, get_gpu_memory_map()[0]/1000, 
                                         psutil.virtual_memory().available /  1024**3, len(buffer)
                                         ))
                     clear_output(wait=True)
-
+                    '''
             # Check if down
             if done:
                 break 
-    
-    torch.save(encoder.state_dict(), "Type_1/encoder.pt")
-    torch.save(decoder.state_dict(), "Type_1/decoder.pt")
+
+    image_visual()
+    loss_visual(loss_history) 
+
+    path_encoder = os.path.join(pathlib.Path().absolute() , 'Type_1/encoder.pt') 
+    path_decoder = os.path.join(pathlib.Path().absolute() , 'Type_1/decoder.pt') 
+
+    torch.save(encoder.state_dict(), path_encoder)
+    torch.save(decoder.state_dict(), path_decoder)
+
+if __name__ == "__main__":
+    main()
