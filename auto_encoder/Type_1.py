@@ -8,7 +8,6 @@ import pathlib
 import matplotlib.pyplot as plt
 import psutil
 import gc
-import subprocess
 import warnings 
 warnings.filterwarnings("ignore")
 from pathlib import Path 
@@ -37,7 +36,7 @@ def main():
     env = gym.make("Bowling-v0").unwrapped 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     n_actions = env.action_space.n
-    no_of_episodes = 5000
+    no_of_episodes = 2000
     batch_size = 32 
     img_dims = (3, 160, 160) 
     buffer_size = (20000,) + img_dims  
@@ -55,24 +54,6 @@ def main():
                             T.ToTensor()])
         screen = resize(screen).to("cuda")#.unsqueeze(0) 
         return screen ##Returns Grayscale, PILIMAGE, TENSOR 
-
-    def get_gpu_memory_map():
-        """Get the current gpu usage.
-        Returns
-        -------
-        usage: dict
-            Keys are device ids as integers.
-            Values are memory usage as integers in MB.
-        """
-        result = subprocess.check_output(
-            [
-                'nvidia-smi', '--query-gpu=memory.used',
-                '--format=csv,nounits,noheader'
-            ], encoding='utf-8')
-        # Convert lines into a dictionary
-        gpu_memory = [int(x) for x in result.strip().split('\n')]
-        gpu_memory_map = dict(zip(range(len(gpu_memory)), gpu_memory))
-        return gpu_memory_map
 
     # buffer = BufferDeque(buffer_size[0])
     buffer = BufferArray(buffer_size)
