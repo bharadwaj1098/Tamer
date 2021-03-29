@@ -36,7 +36,7 @@ def main():
     env = gym.make("Bowling-v0").unwrapped 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     n_actions = env.action_space.n
-    no_of_episodes = 2000
+    no_of_episodes = 1 #2000
     batch_size = 32 
     img_dims = (3, 160, 160) 
     buffer_size = (20000,) + img_dims  
