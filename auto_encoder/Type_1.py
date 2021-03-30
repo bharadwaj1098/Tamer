@@ -78,12 +78,12 @@ def main():
 
         img_grid = torchvision.utils.make_grid(interleaved, nrow = 2)
         plt.imshow(img_grid.permute(1,2,0) )
-        plt.savefig(os.path.join(pathlib.Path().absolute() , 'Type_1_out/result'))
+        plt.savefig(os.path.join(pathlib.Path().absolute() , 'Type_1/result'))
 
     def loss_visual(x):
         plt.plot(x)
         plt.show()
-        plt.savefig(os.path.join(pathlib.Path().absolute() , 'Type_1_out/loss_history'))
+        plt.savefig(os.path.join(pathlib.Path().absolute() , 'Type_1/loss_history'))
 
     def optimize():
         # Sample batch and preprocess
@@ -144,8 +144,8 @@ def main():
     image_visual()
     loss_visual(loss_history) 
 
-    path_encoder = os.path.join(pathlib.Path().absolute() , 'Type_1_out/encoder.pt') 
-    path_decoder = os.path.join(pathlib.Path().absolute() , 'Type_1_out/decoder.pt') 
+    path_encoder = os.path.join(pathlib.Path().absolute() , 'Type_1/encoder.pt') 
+    path_decoder = os.path.join(pathlib.Path().absolute() , 'Type_1/decoder.pt') 
 
     torch.save(encoder.state_dict(), path_encoder)
     torch.save(decoder.state_dict(), path_decoder)
