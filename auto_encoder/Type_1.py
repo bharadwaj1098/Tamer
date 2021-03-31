@@ -6,7 +6,7 @@ import cv2
 import os 
 import pathlib 
 import matplotlib.pyplot as plt
-import psutil
+#import psutil
 import gc
 import warnings 
 warnings.filterwarnings("ignore")
@@ -152,3 +152,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+#SBATCH --mail-type=all
+#SBATCH --mail-user=<sarrabel@uncc.edu>
