@@ -6,7 +6,7 @@ import cv2
 import os 
 import pathlib 
 import matplotlib.pyplot as plt
-import psutil
+#import psutil
 import gc
 import warnings 
 warnings.filterwarnings("ignore")
