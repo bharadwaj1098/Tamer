@@ -61,6 +61,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 encoder = Encoder().to(device)
 head_net = Head_net().to(device)
 
+opt = optim.Adam(list(encoder.parameters()) + list(Head_net.parameters()), lr=1e-4, weight_decay = 1e-1 ) 
+
 encoder.load_state_dict(torch.load("auto_encoder/Type_1/encoder.pt", map_location=device))
 encoder.eval()
 
@@ -74,14 +76,21 @@ def get_screen():
     screen = resize(screen).to(device).unsqueeze(0) 
     return screen ##Returns Grayscale, PILIMAGE, TENSOR
 
+def optimize(state):
+    encoder_out = encoder(state.to(device) )
+    head_net_output = head_net(encoder_out)
+    action = np.argmax( head_net_output.detach().numpy() )
+
+    #opt.zero_grad()
+    #loss.backward()
+    #opt.step()
+
 j = 0
 k = 0
 for i in range(1):
     state = get_screen()
-    encoder_out = encoder(state.to(device) )
-    head_net_output = head_net(encoder_out)
-    action = np.argmax( head_net_output.detach().numpy() )
-print(action) 
+    action = optimize(state)
+    
 
 
 
