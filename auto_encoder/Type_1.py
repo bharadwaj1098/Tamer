@@ -24,13 +24,15 @@ import torch.nn.functional as F
 import torchvision.transforms as T 
 import torch.optim as optim 
 
+torch.manual_seed(0)
+
 '''
 This code is to make autoencoder train till episode is DONE.
 each state is 1 RGB image.
 '''
 
 class Encoder(nn.Module):
-    def __init__(self,):
+    def __init__(self):
         super(Encoder, self).__init__()
         
         self.conv1 = nn.Conv2d(3, 64, 3)

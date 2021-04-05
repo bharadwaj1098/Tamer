@@ -39,15 +39,11 @@ class Interface:
         return reward
 
     def show_action(self, action):
-        """
-        Show agent's action on pygame screen
-        Args:
-            action: numerical action (for MountainCar environment only currently)
-        """
+       
         area = self.screen.fill((0, 0, 0))
         pygame.display.update(area)
         text = self.font.render(self.action_map[action], True, (255, 255, 255))
         text_rect = text.get_rect()
         text_rect.center = (100, 50)
         area = self.screen.blit(text, text_rect)
-        pygame.display.update(area)
+        pygame.display.update(area) 
