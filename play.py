@@ -44,14 +44,16 @@ class KeyboardCallback(Callback):
         if self.event.type == pygame.KEYDOWN:
             if self.event.key in self.relevant_keys:
                 self.pressed_keys.append(self.event.key)
-            # elif self.event.key == 27:
-            #     self.running = False
         elif self.event.type == pygame.KEYUP:
             if self.event.key in self.relevant_keys:
                 self.pressed_keys.remove(self.event.key)
 
+class RandomActionCallback(Callback):
+    def action(self):
+        return self.env.action_space.sample()
+    
 class Play():
-    def __init__(self, env, callbacks=None):
+    def __init__(self, env, callbacks=[]):
         self.env = env
         self._callbacks = {
             'before_run': [],
@@ -61,8 +63,8 @@ class Play():
             'after_run': [],
             'events': []
         }
-        if callbacks is not None:
-            self.parse_callbacks(callbacks)
+        callbacks = [RandomActionCallback] + callbacks
+        self.parse_callbacks(callbacks)
 
     def __call__(self, n_episodes=None, transpose=True, fps=30, zoom=None,):
         """Allows one to play the game using keyboard.
@@ -132,9 +134,7 @@ class Play():
             # Get Action
             if self._callbacks.get('action') is not None:
                 action = self._callbacks['action']()
-            else:
-                action = self.env.action_space.sample()
-                
+
             # Take Action
             prev_state = state
             state, reward, env_done, info = self.env.step(action)
