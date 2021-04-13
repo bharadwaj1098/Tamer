@@ -1,5 +1,6 @@
 import os
 import pygame
+from pygame.locals import *
 
 
 class Interface:
@@ -29,7 +30,7 @@ class Interface:
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_w:
                     area = self.screen.fill((0, 255, 0))
-                    reward = 1
+                    reward = 1 
                     break
                 elif event.key == pygame.K_a:
                     area = self.screen.fill((255, 0, 0))
