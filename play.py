@@ -1,3 +1,4 @@
+from warnings import warn
 from pdb import set_trace
 
 import gym
@@ -7,15 +8,26 @@ import torch
 from torch import nn
 from pygame.locals import VIDEORESIZE, RESIZABLE
 
-
-class Callback():
-    def __init__(self):
-        self.play = None
-        
+class Callback(object):
+    play = None
+    def __init__(self): pass
+    
+    def __call__(self, event_name):
+        """ Runs a callback method if it exists """
+        res = getattr(self, event_name)()
+        return res
+    
     def __getattr__(self, name):
         if hasattr(self.play, name):
             return getattr(self.play, name)
-        
+    
+    def __setattr__(self, name, value):
+        if hasattr(self.play, name):
+            msg = f"You are shadowing an attribute ({name}) that exists in the GymPlayer. " \
+                  f"Use `self.play.{name}` to avoid this."
+            warn(msg)
+        super().__setattr__(name, None)
+
     def __repr__(self):
         return type(self).__name__
 
@@ -25,7 +37,7 @@ class KeyboardCallback(Callback):
         self.keys_to_action = None
         self.pressed_keys = []
         
-    def before_run(self):
+    def before_loop(self):
         if self.keys_to_action is None:
             if hasattr(self.env, 'get_keys_to_action'):
                 self.keys_to_action = self.env.get_keys_to_action()
@@ -37,9 +49,9 @@ class KeyboardCallback(Callback):
                         
         self.play.relevant_keys = set(sum(map(list, self.keys_to_action.keys()),[]))
     
-    def action(self):
-        return self.keys_to_action.get(tuple(sorted(self.pressed_keys)), 0)
-        
+    def set_action(self):
+        self.play.action = self.keys_to_action.get(tuple(sorted(self.pressed_keys)), 0)
+
     def events(self):
         if self.event.type == pygame.KEYDOWN:
             if self.event.key in self.relevant_keys:
@@ -49,137 +61,162 @@ class KeyboardCallback(Callback):
                 self.pressed_keys.remove(self.event.key)
 
 class RandomActionCallback(Callback):
-    def action(self):
-        return self.env.action_space.sample()
-    
-class Play():
+    def __init__(self):
+        super().__init__()
+
+    def set_action(self):
+        self.play.action = self.env.action_space.sample()
+
+class GymPlayer():
     def __init__(self, env, callbacks=[]):
         self.env = env
         self._callbacks = {
-            'before_run': [],
-            'action': None,
-            'before_render': [],
-            'after_render': [],
-            'after_run': [],
-            'events': []
+            'before_loop': [],
+            'before_episode': [],
+            'before_step': [],
+            'before_action': [],
+            'set_action': None,
+            'after_action': [],
+            'after_step': [],
+            'events': [],
+            'after_episode': [],
+            'after_loop': [],
         }
         callbacks = [RandomActionCallback] + callbacks
-        self.parse_callbacks(callbacks)
+        self._build_callbacks(callbacks)  
 
-    def __call__(self, n_episodes=None, transpose=True, fps=30, zoom=None,):
-        """Allows one to play the game using keyboard.
-        To simply play the game use:
-            play(gym.make("Pong-v4"))
-        Above code works also if env is wrapped, so it's particularly useful in
-        verifying that the frame-level preprocessing does not render the game
-        unplayable.
-        If you wish to plot real time statistics as you play, you can use
-        gym.utils.play.PlayPlot. Here's a sample code for plotting the reward
-        for last 5 second of gameplay.
-            def callback(obs_t, obs_tp1, action, rew, done, info):
-                return [rew,]
-            plotter = PlayPlot(callback, 30 * 5, ["reward"])
-            env = gym.make("Pong-v4")
-            play(env, callback=plotter.callback)
-        Arguments
-        ---------
-        env: gym.Env
-            Environment to use for playing.
-        transpose: bool
-            If True the output of observation is transposed.
-            Defaults to true.
-        fps: int
-            Maximum number of steps of the environment to execute every second.
-            Defaults to 30.
-        zoom: float
-            Make screen edge this many times bigger
-        keys_to_action: dict: tuple(int) -> int or None
-            Mapping from keys pressed to action performed.
-            For example if pressed 'w' and space at the same time is supposed
-            to trigger action number 2 then key_to_action dict would look like this:
-                {
-                    # ...
-                    sorted(ord('w'), ord(' ')) -> 2
-                    # ...
-                }
-            If None, default key_to_action mapping for that env is used, if provided.
-        """
-
-        self.env.reset()
+    def loop(self, n_episodes=None, transpose=True, fps=30, zoom=None, render=True):
+ 
+        self.running = True
+        self.render = render
+        self.n_episodes = n_episodes
+        self.transpose = transpose
+        self.fps = fps
+        self.state = None
+        self.reward = None
+        self.action = None
+        self.next_state = None
+        self.env_done = True
+        self.info = None
+        
         rendered = self.env.render(mode='rgb_array')
+        self.video_size = [rendered.shape[1], rendered.shape[0]]
         
-        video_size=[rendered.shape[1],rendered.shape[0]]
         if zoom is not None:
-            video_size = int(video_size[0] * zoom), int(video_size[1] * zoom)
+            self.video_size = int(self.video_size[0] * zoom), int(self.video_size[1] * zoom)
             
-        running = True
-        env_done = True
-        episode = 0
-
-        screen = pygame.display.set_mode(video_size, RESIZABLE)
-        clock = pygame.time.Clock()
+        if not render:
+            os.environ['SDL_VIDEODRIVER'] = 'dummy'
+            
+        self.screen = pygame.display.set_mode(self.video_size, RESIZABLE)
+        self.clock = pygame.time.Clock()
         
-        [cb() for cb in self._callbacks['before_run']]
-        while running:
-            # Stop running if episode limit reached
-            if n_episodes is not None and episode > n_episodes:
-                running = False
-                
-            # Start new episode for environment 
-            if env_done:
-                episode += 1
-                env_done = False
-                state = self.env.reset()
-  
-            # Get Action
-            if self._callbacks.get('action') is not None:
-                action = self._callbacks['action']()
-
-            # Take Action
-            prev_state = state
-            state, reward, env_done, info = self.env.step(action)
-            self.state_info = (prev_state, state, reward, env_done, info)
-
-            # Render State
-            [cb() for cb in self._callbacks['before_render']]
-            if state is not None:
-                state = self.env.render( mode='rgb_array')
-                self.display_arr(screen, state, transpose=transpose, video_size=video_size)
-            [cb() for cb in self._callbacks['after_render']]
-            
-            # Check PyGame Events
-            for event in pygame.event.get():
-                self.event = event
-                [cb() for cb in self._callbacks['events']]
-                if event.type == pygame.QUIT:
-                    running = False
-                elif event.type == VIDEORESIZE:
-                    video_size = event.size
-                    self.display_arr(screen, rendered, transpose=transpose, video_size=video_size)
-
-            pygame.display.flip()
-            clock.tick(fps)
-        [cb() for cb in self._callbacks['after_run']]
+        self.env.reset()
+    
+        self._run_event(self._do_loop, 'loop')
+        
+    def _do_loop(self):
+        if self.n_episodes is not None:
+            self._run_event(self._do_n_episodes, 'episode')
+        else:
+            self._run_event(self._do_episodes, 'episode')
         pygame.quit()
-        
-    def parse_callbacks(self, callbacks):
+    
+    def _do_n_episodes(self):
+        for episode in range(self.n_episodes):
+            self.episode = episode+1
+            self.env_done = False
+            self.state = self.env.reset()
+            
+            while not self.env_done:
+                
+                if not self.running: 
+                    return
+                
+                self._run_event(self._do_step, 'step')
+                
+                self._do_pygame_events()
+            
+    def _do_episodes(self):
+        self.episode = 0
+        while self.running:
+            
+            if self.env_done:
+                self.episode += 1
+                self.env_done = False
+                self.state = self.env.reset()
+                
+            self._run_event(self._do_step, 'step')
+            
+            self._do_pygame_events()
+    
+    def _do_step(self):
+        self._run_event(self._do_action, 'action')
+
+        if self.next_state is not None and self.render:
+            rendered = self.env.render(mode='rgb_array')
+            self.display_arr(self.screen, 
+                                rendered, 
+                                transpose=self.transpose, 
+                                video_size=self.video_size)
+    
+    def _do_action(self):
+        self._run_callback('set_action')
+        if self.action is None:
+            err = "Value action is set to None. Either no action callback is set or the " \
+                    "callback does not set an action."
+            raise TypeError(err)
+        self.next_state, self.reward, self.env_done, self.info = self.env.step(self.action)
+    
+    def _do_pygame_events(self):
+        for event in pygame.event.get():
+            self.event = event
+            self._run_callback('events')
+            if event.type == pygame.QUIT:
+                self.running = False
+            elif event.type == VIDEORESIZE and self.render:
+                self.video_size = event.size
+                rendered = self.env.render(mode='rgb_array')
+                self.display_arr(self.screen, 
+                                    rendered, 
+                                    transpose=self.transpose,
+                                    video_size=self.video_size)
+        if self.render: 
+            pygame.display.flip()
+            caption = f"{round(self.clock.get_fps())} {self.episode}"
+            pygame.display.set_caption(caption)
+        self.clock.tick(self.fps)
+                    
+    def _run_callback(self, cb_name):
+        cbs = self._callbacks[cb_name]
+        if not isinstance(cbs, list):
+            cbs(cb_name)
+        else:
+            [cb(cb_name) for cb in cbs]
+    
+    def _run_event(self, event, event_name):
+        self._run_callback(f'before_{event_name}')
+        event()
+        self._run_callback(f'after_{event_name}')
+    
+    def _build_callbacks(self, callbacks):
         if not isinstance(callbacks, (list, tuple)):
             callbacks = [callbacks]
 
         for cb in callbacks:
             if isinstance(cb, type):
+                cb.play = self
                 cb = cb()
             if not isinstance(cb, Callback):
                 continue
-                
-            cb.play = self
-            for m in dir(cb):
-                if m in self._callbacks:
-                    if m == 'action':
-                        self._callbacks[m] = getattr(cb, m)
+
+            cb_dir = cb.__dir__()
+            for cb_name in self._callbacks.keys():
+                if cb_name in cb_dir:
+                    if cb_name == 'set_action':
+                        self._callbacks[cb_name] = cb
                     else:
-                        self._callbacks[m].append(getattr(cb, m))
-            
+                        self._callbacks[cb_name].append(cb)
         
     def display_arr(self, screen, arr, video_size, transpose):
         arr_min, arr_max = arr.min(), arr.max()
@@ -220,10 +257,10 @@ class Head(nn.Module):
     def forward(self, x):
         x = x 
         x = F.relu(self.linear_1(x))
-        x = F.rel
 
+# TODO: Add separate process that has PyGame Keyboard listener listening for feedback
+# TODO: Create Training Callbacks  
 def main():
-    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     env = gym.make("Bowling-v0").unwrapped 
@@ -240,9 +277,10 @@ def main():
 
     opt = torch.optim.Adam( head_net.parameters(), lr=1e-4, weight_decay = 1e-1 ) 
 
-    play = Play(env, callbacks=[KeyboardCallback])
+    # play = GymPlayer(env, callbacks=[KeyboardCallback])
+    play = GymPlayer(env)
 
-    play(zoom=4, fps=60)
+    play.loop(zoom=4, fps=60)
 
 if __name__ == "__main__":
     main() 
