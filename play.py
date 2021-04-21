@@ -1,6 +1,6 @@
 from warnings import warn
 from pdb import set_trace
-import multiprocessing as mp
+from multiprocessing import Process
 
 import gym
 import pygame
@@ -254,24 +254,25 @@ class Head(nn.Module):
         x = x 
         x = F.relu(self.linear_1(x))
 
-class FeedbackListener():
+class FeedbackListener(Process):
     def __init__(self, video_size=(200, 100)):
+        super().__init__()
         self.video_size = video_size
+        
+    def run(self, fps=30):
         self._init_pygames()
-        
-    def _init_pygames(self):
-        pygame.init()
-        self.screen = pygame.display.set_mode(self.video_size, RESIZABLE)
-        self.clock = pygame.time.Clock()
-        self._update_screen()
-        
-    def listen(self, fps=30):
         self.listening = True
         while self.listening:
             fb, fill = self._do_pygame_events()
             self._update_screen(fill)
             self.clock.tick(fps)
             
+    def _init_pygames(self):
+        pygame.init()
+        self.screen = pygame.display.set_mode(self.video_size, RESIZABLE)
+        self.clock = pygame.time.Clock()
+        self._update_screen()
+    
     def _do_pygame_events(self):
         fb, fill = 0, None
         for event in pygame.event.get():
@@ -295,10 +296,6 @@ class FeedbackListener():
             fill = self.screen.fill((0, 0, 0))
             
         pygame.display.update(fill) 
-
-def run_listener():
-    listener = FeedbackListener()
-    listener.listen()
         
 # TODO: Add shared memory for storing feedback
 # TODO: Create Training Callbacks  
@@ -317,16 +314,16 @@ def main():
     for name, params in encoder.named_parameters():
         params.requires_grad = False
 
-    opt = torch.optim.Adam( head_net.parameters(), lr=1e-4, weight_decay = 1e-1 ) 
+    opt = torch.optim.Adam(head_net.parameters(), lr=1e-4, weight_decay=1e-1) 
     
-    feedback_proc = mp.Process(target=run_listener)
-    feedback_proc.start()
+    listener = FeedbackListener()
+    listener.start()
     
     # play = GymPlayer(env, callbacks=[KeyboardCallback])
     play = GymPlayer(env)
     play.loop(zoom=4, fps=60)
     
-    feedback_proc.join()
+    listener.join()
     
 if __name__ == "__main__":
     main() 
