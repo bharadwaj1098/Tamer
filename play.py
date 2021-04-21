@@ -1,5 +1,6 @@
 from warnings import warn
 from pdb import set_trace
+import multiprocessing as mp
 
 import gym
 import pygame
@@ -86,7 +87,6 @@ class GymPlayer():
         self._build_callbacks(callbacks)  
 
     def loop(self, n_episodes=None, transpose=True, fps=30, zoom=None, render=True):
- 
         self.running = True
         self.render = render
         self.n_episodes = n_episodes
@@ -155,10 +155,8 @@ class GymPlayer():
 
         if self.next_state is not None and self.render:
             rendered = self.env.render(mode='rgb_array')
-            self.display_arr(self.screen, 
-                                rendered, 
-                                transpose=self.transpose, 
-                                video_size=self.video_size)
+            self.update_screen(self.screen, 
+                                rendered)
     
     def _do_action(self):
         self._run_callback('set_action')
@@ -177,12 +175,10 @@ class GymPlayer():
             elif event.type == VIDEORESIZE and self.render:
                 self.video_size = event.size
                 rendered = self.env.render(mode='rgb_array')
-                self.display_arr(self.screen, 
-                                    rendered, 
-                                    transpose=self.transpose,
-                                    video_size=self.video_size)
+                self.update_screen(self.screen, 
+                                    rendered)
         if self.render: 
-            pygame.display.flip()
+            pygame.display.update()
             caption = f"{round(self.clock.get_fps())} {self.episode}"
             pygame.display.set_caption(caption)
         self.clock.tick(self.fps)
@@ -218,11 +214,11 @@ class GymPlayer():
                     else:
                         self._callbacks[cb_name].append(cb)
         
-    def display_arr(self, screen, arr, video_size, transpose):
+    def update_screen(self, screen, arr):
         arr_min, arr_max = arr.min(), arr.max()
         arr = 255.0 * (arr - arr_min) / (arr_max - arr_min)
-        pyg_img = pygame.surfarray.make_surface(arr.swapaxes(0, 1) if transpose else arr)
-        pyg_img = pygame.transform.scale(pyg_img, video_size)
+        pyg_img = pygame.surfarray.make_surface(arr.swapaxes(0, 1) if self.transpose else arr)
+        pyg_img = pygame.transform.scale(pyg_img, self.video_size)
         screen.blit(pyg_img, (0,0))
     
 class Encoder(nn.Module):
@@ -258,7 +254,53 @@ class Head(nn.Module):
         x = x 
         x = F.relu(self.linear_1(x))
 
-# TODO: Add separate process that has PyGame Keyboard listener listening for feedback
+class FeedbackListener():
+    def __init__(self, video_size=(200, 100)):
+        self.video_size = video_size
+        self._init_pygames()
+        
+    def _init_pygames(self):
+        pygame.init()
+        self.screen = pygame.display.set_mode(self.video_size, RESIZABLE)
+        self.clock = pygame.time.Clock()
+        self._update_screen()
+        
+    def listen(self, fps=30):
+        self.listening = True
+        while self.listening:
+            fb, fill = self._do_pygame_events()
+            self._update_screen(fill)
+            self.clock.tick(fps)
+            
+    def _do_pygame_events(self):
+        fb, fill = 0, None
+        for event in pygame.event.get():
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_1:
+                    fill = self.screen.fill((0, 255, 0))
+                    fb = 1
+                elif event.key == pygame.K_2:
+                    fill = self.screen.fill((255, 0, 0))
+                    fb = -1
+            elif event.type == VIDEORESIZE:
+                self.video_size = event.size
+                self._update_screen(fill)
+            elif event.type == pygame.QUIT:
+                self.listening = False
+                                 
+        return fb, fill
+    
+    def _update_screen(self, fill=None):
+        if fill is None:
+            fill = self.screen.fill((0, 0, 0))
+            
+        pygame.display.update(fill) 
+
+def run_listener():
+    listener = FeedbackListener()
+    listener.listen()
+        
+# TODO: Add shared memory for storing feedback
 # TODO: Create Training Callbacks  
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -276,11 +318,15 @@ def main():
         params.requires_grad = False
 
     opt = torch.optim.Adam( head_net.parameters(), lr=1e-4, weight_decay = 1e-1 ) 
-
+    
+    feedback_proc = mp.Process(target=run_listener)
+    feedback_proc.start()
+    
     # play = GymPlayer(env, callbacks=[KeyboardCallback])
     play = GymPlayer(env)
-
     play.loop(zoom=4, fps=60)
-
+    
+    feedback_proc.join()
+    
 if __name__ == "__main__":
     main() 
