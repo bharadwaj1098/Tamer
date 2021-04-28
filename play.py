@@ -16,7 +16,7 @@ import torchvision.transforms as T
 import torch.optim as optim
 from torch import nn
 
-#torch.manual_seed(0)
+torch.manual_seed(10)
 
 class Encoder(nn.Module):
     def __init__(self):
@@ -178,14 +178,16 @@ class NetworkController(PyGymCallback):
     
     def after_set_action(self):
         fb, fill = self.listener._do_pygame_events()
-        #if fill is not None:
-        now = time.time()
-        while time.time() < now + self.ts_len:
-            time.sleep(0.01)
-            fb_ts = dt.datetime.now().time() #feedback_timestamp
-            if fb != 0:
-                self.buffer.append([self.state_ts, self.state, self.reward, fb, fb_ts])
-        print(self.buffer)
+        if fill is not None:
+            now = time.time()
+            while time.time() < now + self.ts_len:
+                time.sleep(0.01)
+                fb_ts = dt.datetime.now().time() #feedback_timestamp
+                if fb != 0:
+                    self.buffer.append([self.state_ts, self.state, self.reward, fb, fb_ts])
+        
+        if len(self.buffer) > 1:
+            print(self.buffer)
 
 class PyControllerCallback(PyGymCallback): 
     def __init__(self, keys_to_action=None, **kwargs):
