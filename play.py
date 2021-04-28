@@ -5,8 +5,53 @@ from functools import partial
 
 import gym
 import pygame
+import os
+import numpy as np
+import time 
+import datetime as dt 
+
 import torch
+import torch.nn.functional as F
+import torchvision.transforms as T 
+import torch.optim as optim
 from torch import nn
+
+#torch.manual_seed(0)
+
+class Encoder(nn.Module):
+    def __init__(self):
+        super(Encoder, self).__init__()
+        
+        self.conv1 = nn.Conv2d(3, 64, 3)
+        self.conv2 = nn.Conv2d(64, 64, 3)
+        self.conv3 = nn.Conv2d(64, 1, 3)
+
+        self.conv_bn1 = nn.BatchNorm2d(64)
+        self.conv_bn2 = nn.BatchNorm2d(1)
+        
+        self.linear_1 = nn.Linear(64, 100)
+        
+    def forward(self, x):
+        x = x
+        x = F.max_pool2d(self.conv_bn1(self.conv1(x)), 2)
+        x = F.max_pool2d(self.conv_bn1(self.conv2(x)), 2)
+        x = F.max_pool2d(self.conv_bn1(self.conv2(x)), 2)
+        x = F.max_pool2d(self.conv_bn2(self.conv3(x)), 2)
+        x = x.view(x.size(0), -1)
+        x = self.linear_1(x) #encoded states might come in "-ve" so no Relu or softmax
+        return x
+
+class Head(nn.Module):
+    def __init__(self):
+        super(Head, self).__init__()
+        self.linear_1 = nn.Linear(100,16)
+        self.linear_2 = nn.Linear(16,6)
+    
+    def forward(self, x):
+        x = x 
+        x = F.relu(self.linear_1(x))
+        x = F.relu(self.linear_2(x))
+        return x
 
 class Callback(object):
     play = None
@@ -20,7 +65,7 @@ class Callback(object):
     def __getattr__(self, name):
         if hasattr(self.play, name):
             return getattr(self.play, name)
-    
+     
     def __setattr__(self, name, value):
         if hasattr(self.play, name):
             msg = f"You are shadowing an attribute ({name}) that exists in the GymPlayer. " \
@@ -54,7 +99,6 @@ class PyGymCallback(Callback):
         self.clock = pygame.time.Clock()
         
         self.env.reset()
-
         
     def reset(self):
         self.play.state = self.env.reset()
@@ -83,7 +127,6 @@ class PyGymCallback(Callback):
                 self._update_screen(self.screen, rendered)
                 pygame.display.update()
      
-    
     def _update_screen(self, screen, arr):
         arr_min, arr_max = arr.min(), arr.max()
         arr = 255.0 * (arr - arr_min) / (arr_max - arr_min)
@@ -101,6 +144,48 @@ class PyGymCallback(Callback):
 
     def after_play(self):
         pygame.quit()
+
+class NetworkController(PyGymCallback):
+    def __init__(self, encoder, head, listener, img_dims = (3, 160, 160), ts_len = 0.3, **kwargs):
+        super().__init__(**kwargs)
+        self.encoder = encoder
+        self.head = head
+        self.listener = listener 
+        self.img_dims = img_dims
+        self.ts_len = ts_len
+        self.buffer = []
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    def before_episode(self):
+        self.env.reset() 
+
+    def before_set_action(self):
+        state = self.env.render(mode='rgb_array').transpose((2,0,1))
+        state = np.ascontiguousarray(state, dtype = np.float32)/255
+        state = torch.from_numpy(state)
+        resize = T.Compose([T.ToPILImage(),
+                            T.Resize((self.img_dims[1:])),
+                            T.ToTensor()])
+        self.state_ts = time.time()
+        state = resize(state).to(self.device).unsqueeze(0) 
+        return state  
+    
+    def set_action(self):
+        self.play.state = self.before_set_action()
+        network_output = self.head(self.encoder(self.play.state.to(self.device)))
+        action = np.argmax(network_output.detach().numpy())
+        self.play.action = action 
+    
+    def after_set_action(self):
+        fb, fill = self.listener._do_pygame_events()
+        #if fill is not None:
+        now = time.time()
+        while time.time() < now + self.ts_len:
+            time.sleep(0.01)
+            fb_ts = dt.datetime.now().time() #feedback_timestamp
+            if fb != 0:
+                self.buffer.append([self.state_ts, self.state, self.reward, fb, fb_ts])
+        print(self.buffer)
 
 class PyControllerCallback(PyGymCallback): 
     def __init__(self, keys_to_action=None, **kwargs):
@@ -230,48 +315,15 @@ class Player():
         if not isinstance(callbacks, (list, tuple)):
             callbacks = [callbacks]
 
-        for cb in callbacks:
+        for cb in callbacks: #cb is the input class to the player class
             if isinstance(cb, (type, partial)):
                 cb = cb()
             cb.play = self
-            cb_dir = cb.__dir__()
+            cb_dir = cb.__dir__() #cb_dir is all the classes in the input cb class
             for cb_name in self._callbacks.keys():
                 if cb_name in cb_dir:
                     self._callbacks[cb_name].append(cb)
     
-class Encoder(nn.Module):
-    def __init__(self):
-        super(Encoder, self).__init__()
-        
-        self.conv1 = nn.Conv2d(3, 64, 3)
-        self.conv2 = nn.Conv2d(64, 64, 3)
-        self.conv3 = nn.Conv2d(64, 1, 3)
-
-        self.conv_bn1 = nn.BatchNorm2d(64)
-        self.conv_bn2 = nn.BatchNorm2d(1)
-        
-        self.linear_1 = nn.Linear(64, 100)
-        
-    def forward(self, x):
-        x = x
-        x = F.max_pool2d(self.conv_bn1(self.conv1(x)), 2)
-        x = F.max_pool2d(self.conv_bn1(self.conv2(x)), 2)
-        x = F.max_pool2d(self.conv_bn1(self.conv2(x)), 2)
-        x = F.max_pool2d(self.conv_bn2(self.conv3(x)), 2)
-        x = x.view(x.size(0), -1)
-        x = self.linear_1(x) #encoded states might come in "-ve" so no Relu or softmax
-        return x
-
-class Head(nn.Module):
-    def __init__(self):
-        super(Head, self).__init__()
-        self.linear_1 = nn.Linear(100,16)
-        self.linear_2 = nn.Linear(16,4)
-    
-    def forward(self, x):
-        x = x 
-        x = F.relu(self.linear_1(x))
-
 class FeedbackListener(Process):
     def __init__(self, video_size=(200, 100)):
         super().__init__()
@@ -287,7 +339,7 @@ class FeedbackListener(Process):
             
     def _init_pygames(self):
         pygame.init()
-        self.screen = pygame.display.set_mode(self.video_size, RESIZABLE)
+        self.screen = pygame.display.set_mode(self.video_size, pygame.RESIZABLE)
         self.clock = pygame.time.Clock()
         self._update_screen()
     
@@ -301,12 +353,11 @@ class FeedbackListener(Process):
                 elif event.key == pygame.K_2:
                     fill = self.screen.fill((255, 0, 0))
                     fb = -1
-            elif event.type == VIDEORESIZE:
+            elif event.type == pygame.VIDEORESIZE:
                 self.video_size = event.size
                 self._update_screen(fill)
             elif event.type == pygame.QUIT:
                 self.listening = False
-                                 
         return fb, fill
     
     def _update_screen(self, fill=None):
@@ -318,14 +369,13 @@ class FeedbackListener(Process):
 # TODO: Add shared memory for storing feedback
 # TODO: Create Training Callbacks  
 def main():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     env = gym.make("Bowling-v0").unwrapped 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_episodes = 1
 
     encoder = Encoder().to(device)
-    head_net = Head().to(device)
-
+    head_net = Head().to(device) 
     encoder.load_state_dict(torch.load("auto_encoder/Type_1/encoder.pt", map_location=device))
     
     # Freeze encoder weights
@@ -336,13 +386,40 @@ def main():
     
     listener = FeedbackListener()
     listener.start()
-    
-    # pygamecb = partial(PyGymCallback, **dict(env=env, zoom=4, fps=60, render=True))
-    # play = GymPlayer(env, callbacks=[KeyboardControlsCallback])
-    player = Player(callbacks=[PyControllerCallback(env=env, zoom=4, fps=60, human=True)])
+
+    player = Player(callbacks=[NetworkController(encoder= encoder, head=head_net, listener=listener,
+                                                    env=env, zoom=4, fps=60, human=True)])
     player.play()
-    
+
     listener.join()
     
 if __name__ == "__main__":
     main() 
+
+    '''
+    pygamecb = partial(PyGymCallback, **dict(env=env, zoom=4, fps=60, render=True))
+    play = GymPlayer(env, callbacks=[KeyboardControlsCallback])
+
+    #player = Player(callbacks=[PyControllerCallback(env=env, zoom=4, fps=60, human=True)])
+    #player.play()
+
+    img_dims = (3, 160, 160)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    def get_screen():
+        screen = env.render(mode = 'rgb_array')
+        
+        screen = screen.transpose((2,0,1))
+        screen = np.ascontiguousarray(screen, dtype = np.float32)/255
+        screen = torch.from_numpy(screen)
+        resize = T.Compose([T.ToPILImage(),
+                            T.Resize((img_dims[1:])),
+                            T.ToTensor()])
+        screen = resize(screen).to(device).unsqueeze(0)
+        encoder_output = encoder(screen)
+        print(encoder_output) 
+        network_output = head_net(encoder_output)
+        print(network_output) 
+    
+    get_screen()
+    '''

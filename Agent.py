@@ -2,6 +2,7 @@ import numpy as np
 import gym 
 import random
 import time
+import os
 import datetime as dt 
 from pathlib import Path 
 from csv import DictWriter 
@@ -26,7 +27,7 @@ torch.manual_seed(0)
 
 BOWLING_ACTION_MAP = {0:'NOOP', 1:'FIRE', 2:'UP', 3:'DOWN', 4:'UPFIRE', 5:'DOWNFIRE'} 
 
-import os
+
 #os.environ['DISPLAY'] = ':1'
 
 class Encoder(nn.Module):
@@ -79,7 +80,8 @@ class Agent:
         self.head = head
         self.buffer = []
 
-    def get_screen(self, screen):
+    def get_screen(self):
+        screen = self.env.render(mode='rgb_array')
         screen = screen.transpose((2,0,1))
         screen = np.ascontiguousarray(screen, dtype = np.float32)/255
         screen = torch.from_numpy(screen)
@@ -110,9 +112,9 @@ class Agent:
 
                 if human_reward != 0: 
                     self.buffer.append([state_ts, state, env_reward, feedback_ts, human_reward])
-                    print(buffer[:]) 
+                    #print(buffer[:]) 
 
-            state = self.get_screen(next_state)
+            state = self.get_screen()
     
     def train(self):
         self.env.render('rgb_array') 
