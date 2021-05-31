@@ -1,11 +1,11 @@
 from warnings import warn
 from pdb import set_trace
-from multiprocessing import Process
+from multiprocessing import Process, Queue
 from functools import partial
 
 import gym
 import pygame
-import os
+import os 
 import numpy as np
 import time 
 import datetime as dt 
@@ -77,7 +77,7 @@ class Callback(object):
         return type(self).__name__
 
 class PyGymCallback(Callback):
-    def __init__(self, env, transpose=True, fps=60, zoom=None, human=False):
+    def __init__(self, env,transpose=True, fps=60, zoom=None, human=False):
         super().__init__()
         self.env = env
         self.transpose = transpose
@@ -146,18 +146,15 @@ class PyGymCallback(Callback):
         pygame.quit()
 
 class NetworkController(PyGymCallback):
-    def __init__(self, encoder, head, listener, img_dims = (3, 160, 160), ts_len = 0.3, **kwargs):
+    def __init__(self, encoder, head, queue, img_dims = (3, 160, 160), ts_len = 0.3, **kwargs):
         super().__init__(**kwargs)
         self.encoder = encoder
         self.head = head
-        self.listener = listener 
+        self.queue = queue 
         self.img_dims = img_dims
         self.ts_len = ts_len
         self.buffer = []
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    def before_episode(self):
-        self.env.reset() 
 
     def before_set_action(self):
         state = self.env.render(mode='rgb_array').transpose((2,0,1))
@@ -172,22 +169,24 @@ class NetworkController(PyGymCallback):
     
     def set_action(self):
         self.play.state = self.before_set_action()
-        network_output = self.head(self.encoder(self.play.state.to(self.device)))
-        action = np.argmax(network_output.detach().numpy())
-        self.play.action = action 
-    
+        self.network_output = self.head(self.encoder(self.play.state.to(self.device)))
+        self.action = np.argmax(self.network_output.detach().numpy())
+        self.play.action = self.action
+
+        fb = self.queue.get()
+        if  fb != 0:
+            self.buffer.append([self.play.state, fb, np.amax(self.network_output.detach().numpy())])
+
     def after_set_action(self):
-        fb, fill = self.listener._do_pygame_events()
-        if fill is not None:
-            now = time.time()
-            while time.time() < now + self.ts_len:
-                time.sleep(0.01)
-                fb_ts = dt.datetime.now().time() #feedback_timestamp
-                if fb != 0:
-                    self.buffer.append([self.state_ts, self.state, self.reward, fb, fb_ts])
-        
-        if len(self.buffer) > 1:
-            print(self.buffer)
+        '''
+        should sample over buffer and perform SGD\
+            but, how to update the weights of Head_network ?
+        '''
+        if len(self.buffer) > 10:
+            print('working')
+            for i in self.buffer:
+                kk = f"state_shape : {i[0].shape} feedback : {i[1]} network_output : {i[2]}"
+                print(kk)
 
 class PyControllerCallback(PyGymCallback): 
     def __init__(self, keys_to_action=None, **kwargs):
@@ -225,7 +224,7 @@ class PyControllerCallback(PyGymCallback):
                 if event.key in self.relevant_keys:
                     self.pressed_keys.remove(event.key)
 
-class Player():
+class Player(Process):
     _callbacks = {
         'before_play': [],
         'before_episode': [],
@@ -325,11 +324,12 @@ class Player():
             for cb_name in self._callbacks.keys():
                 if cb_name in cb_dir:
                     self._callbacks[cb_name].append(cb)
-    
+
 class FeedbackListener(Process):
-    def __init__(self, video_size=(200, 100)):
+    def __init__(self,fb_queue,video_size=(200, 100)):
         super().__init__()
         self.video_size = video_size
+        self.fb_queue = fb_queue
         
     def run(self, fps=30):
         self._init_pygames()
@@ -337,8 +337,10 @@ class FeedbackListener(Process):
         while self.listening:
             fb, fill = self._do_pygame_events()
             self._update_screen(fill)
+            #add feedback to queue is feeback =! 0
             self.clock.tick(fps)
-            
+            self.fb_queue.put(fb)
+
     def _init_pygames(self):
         pygame.init()
         self.screen = pygame.display.set_mode(self.video_size, pygame.RESIZABLE)
@@ -360,7 +362,7 @@ class FeedbackListener(Process):
                 self._update_screen(fill)
             elif event.type == pygame.QUIT:
                 self.listening = False
-        return fb, fill
+        return fb, fill 
     
     def _update_screen(self, fill=None):
         if fill is None:
@@ -386,42 +388,17 @@ def main():
 
     opt = torch.optim.Adam(head_net.parameters(), lr=1e-4, weight_decay=1e-1) 
     
-    listener = FeedbackListener()
+    Feedback_queue = Queue()
+
+    listener = FeedbackListener(Feedback_queue) #pass it to listener ()
     listener.start()
 
-    player = Player(callbacks=[NetworkController(encoder= encoder, head=head_net, listener=listener,
-                                                    env=env, zoom=4, fps=60, human=True)])
+    player = Player(callbacks=[NetworkController(encoder= encoder, head=head_net, queue=Feedback_queue,
+                                                    env=env, zoom=4, fps=60, human=True)]) #pass the queue
     player.play()
 
     listener.join()
     
+
 if __name__ == "__main__":
     main() 
-
-    '''
-    pygamecb = partial(PyGymCallback, **dict(env=env, zoom=4, fps=60, render=True))
-    play = GymPlayer(env, callbacks=[KeyboardControlsCallback])
-
-    #player = Player(callbacks=[PyControllerCallback(env=env, zoom=4, fps=60, human=True)])
-    #player.play()
-
-    img_dims = (3, 160, 160)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    def get_screen():
-        screen = env.render(mode = 'rgb_array')
-        
-        screen = screen.transpose((2,0,1))
-        screen = np.ascontiguousarray(screen, dtype = np.float32)/255
-        screen = torch.from_numpy(screen)
-        resize = T.Compose([T.ToPILImage(),
-                            T.Resize((img_dims[1:])),
-                            T.ToTensor()])
-        screen = resize(screen).to(device).unsqueeze(0)
-        encoder_output = encoder(screen)
-        print(encoder_output) 
-        network_output = head_net(encoder_output)
-        print(network_output) 
-    
-    get_screen()
-    '''
