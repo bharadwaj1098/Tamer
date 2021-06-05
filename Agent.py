@@ -1,34 +1,23 @@
-import numpy as np 
-import gym 
-import random
-import time
-import os
+from warnings import warn
+from pdb import set_trace
+from multiprocessing import Process, Queue
+from functools import partial
+from play import PyGymCallback, Player, FeedbackListener
+
+import gym
+import pygame
+import os 
+import numpy as np
+import time 
 import datetime as dt 
-from pathlib import Path 
-from csv import DictWriter 
 
-import matplotlib.pyplot as plt
-#%matplotlib inline
-from IPython import display
-
-import asyncio
-import warnings 
-warnings.filterwarnings("ignore") 
-
-import torch 
-import torchvision
-import torchvision.utils 
-import torch.nn as nn 
+import torch
 import torch.nn.functional as F
 import torchvision.transforms as T 
 import torch.optim as optim
+from torch import nn
 
-torch.manual_seed(0)
-
-BOWLING_ACTION_MAP = {0:'NOOP', 1:'FIRE', 2:'UP', 3:'DOWN', 4:'UPFIRE', 5:'DOWNFIRE'} 
-
-
-#os.environ['DISPLAY'] = ':1'
+torch.manual_seed(10)
 
 class Encoder(nn.Module):
     def __init__(self):
@@ -53,9 +42,9 @@ class Encoder(nn.Module):
         x = self.linear_1(x) #encoded states might come in "-ve" so no Relu or softmax
         return x
 
-class Head_net(nn.Module):
+class Head(nn.Module):
     def __init__(self):
-        super(Head_net,self).__init__()
+        super(Head,self).__init__()
 
         self.linear_1 = nn.Linear(100,16)
         self.linear_2 = nn.Linear(16,4)
@@ -66,86 +55,118 @@ class Head_net(nn.Module):
         x = F.relu(self.linear_2(x))
         return x
 
-class Agent:
-    def __init__(self, env, num_episodes, 
-                encoder, head, device,
-                img_dims = (3, 160, 160), ts_len=0.2):
-
-        self.env = env
-        self.img_dims = img_dims
-        self.num_episodes = num_episodes
-        self.ts_len = ts_len
-        self.device = device  
+class NetworkController(PyGymCallback):
+    def __init__(self, encoder, head, queue, img_dims = (3, 160, 160), ts_len = 0.3, **kwargs):
+        super().__init__(**kwargs)
         self.encoder = encoder
         self.head = head
+        self.queue = queue 
+        self.img_dims = img_dims
+        self.ts_len = ts_len
         self.buffer = []
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    def get_screen(self):
-        screen = self.env.render(mode='rgb_array')
-        screen = screen.transpose((2,0,1))
-        screen = np.ascontiguousarray(screen, dtype = np.float32)/255
-        screen = torch.from_numpy(screen)
+    def before_set_action(self):
+        state = self.env.render(mode='rgb_array').transpose((2,0,1))
+        state = np.ascontiguousarray(state, dtype = np.float32)/255
+        state = torch.from_numpy(state)
         resize = T.Compose([T.ToPILImage(),
                             T.Resize((self.img_dims[1:])),
                             T.ToTensor()])
-        screen = resize(screen).to(self.device).unsqueeze(0)
-        return screen 
+        self.state_ts = time.time()
+        state = resize(state).to(self.device).unsqueeze(0) 
+        return state  
     
-    def _train_(self, disp):
-        state = self.env.reset() 
-        state = self.get_screen(state)
-        for step in range(100):
-            self.env.render('rgb_array') 
-            state_ts = dt.datetime.now().time() #state start time 
-            network_output = self.head(self.encoder(state.to(self.device)) ) #output of the network
-            action = np.argmax( network_output.detach().numpy() ) #action
+    def set_action(self):
+        self.play.state = self.before_set_action()
+        self.network_output = self.head(self.encoder(self.play.state.to(self.device)))
+        self.action = np.argmax(self.network_output.detach().numpy())
+        self.play.action = self.action
 
-            disp.show_action(action) #display_the_action_taken 
-            next_state, env_reward, done, info = self.env.step(action)  
+        fb = self.queue.get()
+        if  fb != 0:
+            self.buffer.append([self.play.state, fb, np.amax(self.network_output.detach().numpy())])
+
+    def after_set_action(self):
+        '''
+        should sample over buffer and perform SGD\
+            but, how to update the weights of Head_network ?
+        '''
+        if len(self.buffer) > 10:
+            print('working')
+            for i in self.buffer:
+                kk = f"state_shape : {i[0].shape} feedback : {i[1]} network_output : {i[2]}"
+                print(kk)
+
+class FeedbackListener(Process):
+    def __init__(self,fb_queue,video_size=(200, 100)):
+        super().__init__()
+        self.video_size = video_size
+        self.fb_queue = fb_queue
+        
+    def run(self, fps=30):
+        self._init_pygames()
+        self.listening = True
+        while self.listening:
+            fb, fill = self._do_pygame_events()
+            self._update_screen(fill)
+            #add feedback to queue is feeback =! 0
+            self.clock.tick(fps)
+            self.fb_queue.put(fb)
+
+    def _init_pygames(self):
+        pygame.init()
+        self.screen = pygame.display.set_mode(self.video_size, pygame.RESIZABLE)
+        self.clock = pygame.time.Clock()
+        self._update_screen()
+    
+    def _do_pygame_events(self):
+        fb, fill = 0, None
+        for event in pygame.event.get():
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_1:
+                    fill = self.screen.fill((0, 255, 0))
+                    fb = 1
+                elif event.key == pygame.K_2:
+                    fill = self.screen.fill((255, 0, 0))
+                    fb = -1
+            elif event.type == pygame.VIDEORESIZE:
+                self.video_size = event.size
+                self._update_screen(fill)
+            elif event.type == pygame.QUIT:
+                self.listening = False
+        return fb, fill 
+    
+    def _update_screen(self, fill=None):
+        if fill is None:
+            fill = self.screen.fill((0, 0, 0))
             
-            now = time.time() 
-            while time.time() < now + self.ts_len: 
-                time.sleep(0.01)
-
-                human_reward = disp.get_scalar_feedback()
-                feedback_ts = dt.datetime.now().time() 
-
-                if human_reward != 0: 
-                    self.buffer.append([state_ts, state, env_reward, feedback_ts, human_reward])
-                    #print(buffer[:]) 
-
-            state = self.get_screen()
-    
-    def train(self):
-        self.env.render('rgb_array') 
-        from interface import Interface
-        disp = Interface(action_map = BOWLING_ACTION_MAP)
-        for i in range(self.num_episodes):
-            self._train_(disp) 
-
+        pygame.display.update(fill) 
 
 def main():
     env = gym.make("Bowling-v0").unwrapped 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_episodes = 1
 
-    encoder = Encoder()
-    head_net = Head_net()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    opt = optim.Adam( head_net.parameters(), lr=1e-4, weight_decay = 1e-1 ) 
-
+    encoder = Encoder().to(device)
+    head_net = Head().to(device) 
     encoder.load_state_dict(torch.load("auto_encoder/Type_1/encoder.pt", map_location=device))
-    encoder.eval()
-
+    
+    # Freeze encoder weights
     for name, params in encoder.named_parameters():
-        params.requires_grad = False #no updating happens to the weights while training the Tamer
+        params.requires_grad = False
 
-    agent = Agent(env, num_episodes, encoder = encoder, head = head_net , device = device, ts_len=0.3) 
+    opt = torch.optim.Adam(head_net.parameters(), lr=1e-4, weight_decay=1e-1) 
+    
+    Feedback_queue = Queue()
 
-    agent.train()
+    listener = FeedbackListener(Feedback_queue) #pass it to listener ()
+    listener.start()
+    player = Player(callbacks=[NetworkController(encoder= encoder, head=head_net, queue=Feedback_queue,
+                                                    env=env, zoom=4, fps=60, human=True)]) #pass the queue
+    player.play()
+    listener.join()
+    
 
 if __name__ == "__main__":
     main() 
-
-
-
-                
