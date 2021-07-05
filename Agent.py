@@ -2,7 +2,7 @@ from warnings import warn
 from pdb import set_trace
 from multiprocessing import Process, Queue
 from functools import partial
-from play import PyGymCallback, Player, FeedbackListener
+from play import PyGymCallback, Player
 
 import gym
 import pygame
@@ -10,6 +10,12 @@ import os
 import numpy as np
 import time 
 import datetime as dt 
+from typing import Tuple
+
+import scipy
+import matplotlib.pyplot as plt
+from scipy.stats import uniform, gamma, norm, exponnorm
+import matplotlib.pyplot as plt 
 
 import torch
 import torch.nn.functional as F
@@ -54,6 +60,28 @@ class Head(nn.Module):
         x = F.relu(self.linear_1(x))
         x = F.relu(self.linear_2(x))
         return x
+        
+class CreditAssignment():
+    def __init__(self, dist: scipy.stats.rv_continuous):
+        self.dist = dist
+        
+    def __call__(self, s_start: float, s_end: float, h_start: float) -> float:
+        s_norm_start, s_norm_end = self._normalize(s_start, s_end, h_start)
+        start_cdf = self.dist.cdf(s_norm_start)
+        end_cdf = self.dist.cdf(s_norm_end)
+        return start_cdf - end_cdf
+        
+    def _normalize(self, s_start: float, s_end: float, h_start: float) -> Tuple[float, float]: 
+        s_norm_start =  h_start - s_start
+        s_norm_end = h_start - s_end
+        return s_norm_start, s_norm_end
+    
+    def show_dist(self, s_start: float, s_end: float, h_start: float):
+        s_norm_start, s_norm_end = self._normalize(s_start, s_end, h_start)
+        x = np.linspace(self.dist.ppf(.01), self.dist.ppf(.99))
+        plt.plot(x, self.dist.pdf(x), 'r-')
+        plt.vlines(s_norm_start,ymin=0, ymax=self.dist.pdf(s_norm_start), color='green')
+        plt.vlines(s_norm_end, ymin=0, ymax=self.dist.pdf(s_norm_end), color='green')
 
 class NetworkController(PyGymCallback):
     def __init__(self, encoder, head, queue, img_dims = (3, 160, 160), ts_len = 0.3, **kwargs):
