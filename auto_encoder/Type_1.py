@@ -95,7 +95,6 @@ class BufferArray():
         if self._mem_loc == len(self.memory)-1:
           self._mem_loc = 0
         self.memory[self._mem_loc] = tensor.cpu()
-
         self._mem_loc += 1
         self.push_count += 1
 

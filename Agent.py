@@ -9,7 +9,8 @@ import pygame
 import os 
 import numpy as np
 import time 
-import datetime as dt 
+import datetime as dt
+from itertools import count 
 from typing import Tuple
 
 import scipy
@@ -108,24 +109,37 @@ class NetworkController(PyGymCallback):
     def set_action(self):
         self.play.state = self.before_set_action()
         self.network_output = self.head(self.encoder(self.play.state.to(self.device)))
-        self.action = np.argmax(self.network_output.detach().numpy())
-        self.play.action = self.action
+        self.play.action = np.argmax(self.network_output.detach().numpy())
 
         fb = self.queue.get()
         if  fb != 0:
             self.buffer.append([self.play.state, fb, np.amax(self.network_output.detach().numpy())])
 
     def after_set_action(self):
-        '''
-        should sample over buffer and perform SGD\
-            but, how to update the weights of Head_network ?
-        '''
-        if len(self.buffer) > 10:
-            print('working')
-            for i in self.buffer:
-                kk = f"state_shape : {i[0].shape} feedback : {i[1]} network_output : {i[2]}"
-                print(kk)
+        batch_size=16
+        opt = optim.Adam(list(self.head.parameters()), lr=1e-4, weight_decay = 1e-1 )
+        loss_fn = nn.MSELoss(reduction = 'mean') 
+        self.loss_list = []
+        #only when buffer has 50 feedbacks
+        if len(self.buffer) > 50:
+            for step in count():
+                # Only train every certain number of steps
+                if step % 16 == 0: 
+                    rand_batch = np.random.randint(len(self.buffer), size=batch_size)
+                    #print(f" rand_batch_element_shape : {rand_batch.shape} rand_batch_type : {type(rand_batch)}") 
+                    feedback = torch.stack([torch.tensor(self.buffer[i][1] ) for i in rand_batch]).to(self.device)
+                    network_output = torch.stack([torch.tensor(self.buffer[i][2]) for i in rand_batch]).to(self.device)
+                    L = loss_fn(network_output, feedback)
+                    opt.zero_grad() 
+                    L.backward()
+                    opt.step()
+                    self.loss_list.append(L) 
 
+    def after_play(self):
+        plt.title('Head_Network_Error')
+        plt.plot(self.loss_list)
+        plt.savefig('Test_Error')
+        
 class FeedbackListener(Process):
     def __init__(self,fb_queue,video_size=(200, 100)):
         super().__init__()
@@ -181,10 +195,11 @@ def main():
     encoder.load_state_dict(torch.load("auto_encoder/Type_1/encoder.pt", map_location=device))
     
     # Freeze encoder weights
+    '''
     for name, params in encoder.named_parameters():
         params.requires_grad = False
-
-    opt = torch.optim.Adam(head_net.parameters(), lr=1e-4, weight_decay=1e-1) 
+    '''
+    #opt = torch.optim.Adam(head_net.parameters(), lr=1e-4, weight_decay=1e-1) 
     
     Feedback_queue = Queue()
 
