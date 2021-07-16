@@ -103,7 +103,6 @@ class BufferArray():
         if len(rand_batch.shape) == 3:
            return torch.unsqueeze(self.memory[rand_batch], axis=1)
         return self.memory[rand_batch]
-         
 
 class BufferDeque():
     def __init__(self, size):

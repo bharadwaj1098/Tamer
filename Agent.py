@@ -84,6 +84,29 @@ class CreditAssignment():
         plt.vlines(s_norm_start,ymin=0, ymax=self.dist.pdf(s_norm_start), color='green')
         plt.vlines(s_norm_end, ymin=0, ymax=self.dist.pdf(s_norm_end), color='green')
 
+class BufferArray():
+    def __init__(self, size):
+        self.memory = torch.zeros((size), dtype=torch.float32)
+        self._mem_loc = 0
+        self.push_count = 0
+
+    def __len__(self):
+        return self.push_count
+
+    def push(self, tensor):
+        type(self._mem_loc)
+        if self._mem_loc == len(self.memory)-1:
+          self._mem_loc = 0
+        self.memory[self._mem_loc] = tensor.cpu()
+        self._mem_loc += 1
+        self.push_count += 1
+
+    def random_sample(self, batch_size):
+        rand_batch = np.random.randint(len(self.memory), size=batch_size)
+        if len(rand_batch.shape) == 3:
+           return torch.unsqueeze(self.memory[rand_batch], axis=1)
+        return self.memory[rand_batch]
+
 class NetworkController(PyGymCallback):
     def __init__(self, encoder, head, queue, img_dims = (3, 160, 160), ts_len = 0.3, **kwargs):
         super().__init__(**kwargs)
@@ -92,7 +115,8 @@ class NetworkController(PyGymCallback):
         self.queue = queue 
         self.img_dims = img_dims
         self.ts_len = ts_len
-        self.buffer = []
+        self.dims = (10000,) + self.img_dims + (1,1) 
+        self.buffer = BufferArray(self.dims)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def before_set_action(self):
@@ -110,30 +134,30 @@ class NetworkController(PyGymCallback):
         self.play.state = self.before_set_action()
         self.network_output = self.head(self.encoder(self.play.state.to(self.device)))
         self.play.action = np.argmax(self.network_output.detach().numpy())
+        print(f"buffer_len : {len(self.buffer)}, network : {self.network_output}")
+        #print(self.network_output, self.action)
 
         fb = self.queue.get()
-        if  fb != 0:
-            self.buffer.append([self.play.state, fb, np.amax(self.network_output.detach().numpy())])
+        #self.buffer.append([self.play.state, fb, np.amax(self.network_output.detach().numpy())])
+        self.buffer.push( torch.stack([self.play.state, torch.tensor(fb), torch.argmax(self.network_output.detach()) ]) ) 
 
     def after_set_action(self):
-        batch_size=16
+        batch_size=64
         opt = optim.Adam(list(self.head.parameters()), lr=1e-4, weight_decay = 1e-1 )
         loss_fn = nn.MSELoss(reduction = 'mean') 
         self.loss_list = []
         #only when buffer has 50 feedbacks
-        if len(self.buffer) > 50:
-            for step in count():
-                # Only train every certain number of steps
-                if step % 16 == 0: 
-                    rand_batch = np.random.randint(len(self.buffer), size=batch_size)
-                    #print(f" rand_batch_element_shape : {rand_batch.shape} rand_batch_type : {type(rand_batch)}") 
-                    feedback = torch.stack([torch.tensor(self.buffer[i][1] ) for i in rand_batch]).to(self.device)
-                    network_output = torch.stack([torch.tensor(self.buffer[i][2]) for i in rand_batch]).to(self.device)
-                    L = loss_fn(network_output, feedback)
-                    opt.zero_grad() 
-                    L.backward()
-                    opt.step()
-                    self.loss_list.append(L) 
+        if len(self.buffer) > 50:      
+            # Only train every certain number of steps
+            if self.t % 16 == 0: 
+                rand_batch = np.random.randint(len(self.buffer), size=batch_size) 
+                feedback = torch.stack([torch.tensor(self.buffer[i][1],  dtype=torch.float32 ) for i in rand_batch]).to(self.device)
+                network_output = torch.stack([torch.tensor(self.buffer[i][2], requires_grad=True, dtype=torch.float32) for i in rand_batch]).to(self.device)
+                L = loss_fn(network_output, feedback)
+                opt.zero_grad() 
+                L.backward()
+                opt.step()
+                self.loss_list.append(L)
 
     def after_play(self):
         plt.title('Head_Network_Error')

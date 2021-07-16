@@ -219,7 +219,7 @@ class Player(Process):
         self.term = False
         self.done = False
         self.episode = 0
-        self.step = 0
+        self.t = 0
 
         self._run_event(self._do_play, 'play')
         
@@ -240,7 +240,7 @@ class Player(Process):
         self._run_callback('reset')
         
     def _do_episode(self):
-        check_steps = lambda: self.n_steps is not None and self.step < self.n_steps
+        check_steps = lambda: self.n_steps is not None and self.t < self.n_steps
         while not self.term and check_steps:
         
             if self.next_state is not None:
