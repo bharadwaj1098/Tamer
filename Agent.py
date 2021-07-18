@@ -2,6 +2,8 @@ from warnings import warn
 from pdb import set_trace
 from multiprocessing import Process, Queue
 from functools import partial
+
+from torch._C import device
 from play import PyGymCallback, Player
 
 import gym
@@ -12,6 +14,7 @@ import time
 import datetime as dt
 from itertools import count 
 from typing import Tuple
+from collections import deque 
 
 import scipy
 import matplotlib.pyplot as plt
@@ -84,28 +87,31 @@ class CreditAssignment():
         plt.vlines(s_norm_start,ymin=0, ymax=self.dist.pdf(s_norm_start), color='green')
         plt.vlines(s_norm_end, ymin=0, ymax=self.dist.pdf(s_norm_end), color='green')
 
-class BufferArray():
+class BufferDeque():
     def __init__(self, size):
-        self.memory = torch.zeros((size), dtype=torch.float32)
-        self._mem_loc = 0
-        self.push_count = 0
+        self.memory = deque(maxlen=size)
 
     def __len__(self):
-        return self.push_count
+        return len(self.memory)
+
+    def __getitem__(self, index):
+        if isinstance(index, (tuple, list)):
+          pointer = list(self.memory)
+          return [pointer[i] for i in index]
+        return list(self.memory[index])
 
     def push(self, tensor):
-        type(self._mem_loc)
-        if self._mem_loc == len(self.memory)-1:
-          self._mem_loc = 0
-        self.memory[self._mem_loc] = tensor.cpu()
-        self._mem_loc += 1
-        self.push_count += 1
+        self.memory.append(tensor) 
 
     def random_sample(self, batch_size):
-        rand_batch = np.random.randint(len(self.memory), size=batch_size)
-        if len(rand_batch.shape) == 3:
-           return torch.unsqueeze(self.memory[rand_batch], axis=1)
-        return self.memory[rand_batch]
+        rand_idx = np.random.randint(len(self.memory),  size=batch_size)
+        rand_batch = [self.memory[i] for i in rand_idx]
+        state, action, feedback =  [], [], []
+        for s, a, f in rand_batch:
+            state.append(s)
+            action.append(a)
+            feedback.append(f)
+        return torch.cat(state), torch.stack(action), torch.stack(feedback) 
 
 class NetworkController(PyGymCallback):
     def __init__(self, encoder, head, queue, img_dims = (3, 160, 160), ts_len = 0.3, **kwargs):
@@ -115,8 +121,8 @@ class NetworkController(PyGymCallback):
         self.queue = queue 
         self.img_dims = img_dims
         self.ts_len = ts_len
-        self.dims = (10000,) + self.img_dims + (1,1) 
-        self.buffer = BufferArray(self.dims)
+        self.dims = 10000
+        self.buffer = BufferDeque(self.dims)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def before_set_action(self):
@@ -136,13 +142,15 @@ class NetworkController(PyGymCallback):
         self.play.action = np.argmax(self.network_output.detach().numpy())
         print(f"buffer_len : {len(self.buffer)}, network : {self.network_output}")
         #print(self.network_output, self.action)
-
         fb = self.queue.get()
         #self.buffer.append([self.play.state, fb, np.amax(self.network_output.detach().numpy())])
-        self.buffer.push( torch.stack([self.play.state, torch.tensor(fb), torch.argmax(self.network_output.detach()) ]) ) 
+        self.buffer.push([self.play.state, 
+                                torch.argmax(self.network_output), 
+                                torch.tensor(fb, dtype=torch.float32)]
+            )
 
     def after_set_action(self):
-        batch_size=64
+        batch=64
         opt = optim.Adam(list(self.head.parameters()), lr=1e-4, weight_decay = 1e-1 )
         loss_fn = nn.MSELoss(reduction = 'mean') 
         self.loss_list = []
@@ -150,10 +158,15 @@ class NetworkController(PyGymCallback):
         if len(self.buffer) > 50:      
             # Only train every certain number of steps
             if self.t % 16 == 0: 
-                rand_batch = np.random.randint(len(self.buffer), size=batch_size) 
-                feedback = torch.stack([torch.tensor(self.buffer[i][1],  dtype=torch.float32 ) for i in rand_batch]).to(self.device)
-                network_output = torch.stack([torch.tensor(self.buffer[i][2], requires_grad=True, dtype=torch.float32) for i in rand_batch]).to(self.device)
-                L = loss_fn(network_output, feedback)
+                #rand_batch = np.random.randint(len(self.buffer), size=batch_size) 
+                state, action, feedback = self.buffer.random_sample(batch)
+                network_output = self.head(self.encoder(state.to(self.device)))
+
+                output = []
+                for i, a in enumerate(action):
+                    output.append(network_output[i, a])
+                output = torch.tensor(output, dtype=torch.float32, requires_grad=True)
+                L = loss_fn(output, feedback)
                 opt.zero_grad() 
                 L.backward()
                 opt.step()
