@@ -140,7 +140,7 @@ class NetworkController(PyGymCallback):
         self.play.state = self.before_set_action()
         self.network_output = self.head(self.encoder(self.play.state.to(self.device)))
         self.play.action = np.argmax(self.network_output.detach().numpy())
-        print(f"buffer_len : {len(self.buffer)}, network : {self.network_output}")
+        #print(f"buffer_len : {len(self.buffer)}, network : {self.network_output}")
         #print(self.network_output, self.action)
         fb = self.queue.get()
         #self.buffer.append([self.play.state, fb, np.amax(self.network_output.detach().numpy())])

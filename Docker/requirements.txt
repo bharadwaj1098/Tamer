@@ -1,0 +1,10 @@
+numpy
+gym
+box2d-py
+matplotlib
+seaborn
+pandas
+torch 
+torchvision 
+torchaudio
+pygame
