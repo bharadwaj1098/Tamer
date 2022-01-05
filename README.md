@@ -2,4 +2,5 @@
 trying out to implement Deep Tamer
 
 https://arxiv.org/abs/1709.10163 
-/home/sai/Tamer/Docker /ROMS
+
+Docker_Image :- docker pull bharadwaj1098/torch-rl

@@ -121,7 +121,7 @@ class NetworkController(PyGymCallback):
         self.queue = queue 
         self.img_dims = img_dims
         self.ts_len = ts_len
-        self.dims = 10000
+        self.dims = 1000
         self.buffer = BufferDeque(self.dims)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -139,8 +139,8 @@ class NetworkController(PyGymCallback):
     def set_action(self):
         self.play.state = self.before_set_action()
         self.network_output = self.head(self.encoder(self.play.state.to(self.device)))
-        self.play.action = np.argmax(self.network_output.detach().numpy())
-        #print(f"buffer_len : {len(self.buffer)}, network : {self.network_output}")
+        self.play.action = np.argmax(self.network_output.detach().cpu())
+        print(f"buffer_len : {self.buffer.__len__()}, network : {self.network_output}")
         #print(self.network_output, self.action)
         fb = self.queue.get()
         #self.buffer.append([self.play.state, fb, np.amax(self.network_output.detach().numpy())])
@@ -151,13 +151,14 @@ class NetworkController(PyGymCallback):
 
     def after_set_action(self):
         batch=64
-        opt = optim.Adam(list(self.head.parameters()), lr=1e-4, weight_decay = 1e-1 )
+        opt = optim.Adam(list(self.head.parameters()), lr=0.1, weight_decay = 1e-1 )
         loss_fn = nn.MSELoss(reduction = 'mean') 
         self.loss_list = []
         #only when buffer has 50 feedbacks
-        if len(self.buffer) > 50:      
+        if self.buffer.__len__() > 50:      
             # Only train every certain number of steps
             if self.t % 16 == 0: 
+                # print("in training")
                 #rand_batch = np.random.randint(len(self.buffer), size=batch_size) 
                 state, action, feedback = self.buffer.random_sample(batch)
                 network_output = self.head(self.encoder(state.to(self.device)))
@@ -169,6 +170,8 @@ class NetworkController(PyGymCallback):
                 L = loss_fn(output, feedback)
                 opt.zero_grad() 
                 L.backward()
+                # print(f"Loss : {L} ")
+
                 opt.step()
                 self.loss_list.append(L)
 
@@ -244,7 +247,7 @@ def main():
     listener.start()
     player = Player(callbacks=[NetworkController(encoder= encoder, head=head_net, queue=Feedback_queue,
                                                     env=env, zoom=4, fps=60, human=True)]) #pass the queue
-    player.play()
+    player.play(n_episodes=1, n_steps=1000)
     listener.join()
     
 

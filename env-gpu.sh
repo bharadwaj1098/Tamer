@@ -1,14 +1,4 @@
-# user="1000:10"
-# version="torch"
-# path=$PWD
 
-# while getopts u:v:p: option
-# do
-# case "${option}"
-# in
-# u) user=${OPTARG};;
-# v) version=${OPTARG};;
-# p) path=${OPTARG};;
 
 # esac
 # done
@@ -52,42 +42,53 @@
 
 
 #!/bin/bash
-xhost +
+# xhost +
 
-XAUTH=/tmp/.docker.xauth
-if [ ! -f $XAUTH ]; then
-  xauth_list=$(xauth nlist :0 | sed -e 's/^..../ffff/')
-  if [ ! -z "$xauth_list" ]; then
-    echo $xauth_list | xauth -f $XAUTH nmerge -
-  else
-    touch $XAUTH
-  fi
-  chmod a+r $XAUTH
-fi
+# XAUTH=/tmp/.docker.xauth
+# if [ ! -f $XAUTH ]; then
+#   xauth_list=$(xauth nlist :0 | sed -e 's/^..../ffff/')
+#   if [ ! -z "$xauth_list" ]; then
+#     echo $xauth_list | xauth -f $XAUTH nmerge -
+#   else
+#     touch $XAUTH
+#   fi
+#   chmod a+r $XAUTH
+# fi
 
-# ./docker_clean.bash
 
-no_gui=$1
+# no_gui=$1
 
 # export REGISTRY_SRC_IMAGE=registry.gitlab.com/ghostusers/ghost_gazebo
-export REGISTRY_SRC_IMAGE=bpoole908/mlenv-gpu
+export REGISTRY_SRC_IMAGE=bharadwaj1098/torch-rl
 #docker pull ${REGISTRY_SRC_IMAGE}:release
 
 # updated as of 9/15/20
 # docker pull ${REGISTRY_SRC_IMAGE}:release_v3
-docker pull ${REGISTRY_SRC_IMAGE}:torch
-docker run -t -d --name="mlenv" \
+./Docker/docker_clean.bash
+
+user="1000:10"
+path=$PWD
+
+# while getopts u:v:p: option
+# do
+# case "${option}"
+# in
+# u) user=${OPTARG};;
+# v) version=${OPTARG};;
+# p) path=${OPTARG};;
+docker pull ${REGISTRY_SRC_IMAGE}:latest
+docker run -t -d --name="tamer" \
   --gpus all \
   --env="DISPLAY=$DISPLAY" \
   --env="QT_X11_NO_MITSHM=1" \
+  --volume=$path:/home/dev/mnt \
   --volume="/tmp/.X11-unix:/tmp/.X11-unix:rw" \
+  --volume=/etc/localtime:/etc/localtime:ro \
   --env="XAUTHORITY=$XAUTH" \
   --network host \
   --privileged \
-  ${REGISTRY_SRC_IMAGE}:torch
+  ${REGISTRY_SRC_IMAGE}:latest 
 
-sleep 2
+# docker attach tamer 
 
-docker exec -it mlenv bash
-#\
-#   sh -c "/run_sim.sh $no_gui"
+#docker exec -it torch-rl bash

@@ -19,12 +19,6 @@ ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-FROM python:3.7
-
-LABEL maintainer="Tom Titcombe <t.j.titcombe@gmail.com>"
-
-# Working directory is / by default. We explictly state it here for posterity
-WORKDIR /
 
 RUN apt-get update && \
     apt-get install -y vim \
@@ -46,8 +40,16 @@ RUN apt-get update && \
                apt clean -y && \
                rm -rf /var/lib/apt/lists/*
 
+RUN rm /bin/sh && ln -s /bin/bash /bin/sh
+
+FROM python:3.7
+
+LABEL maintainer="bharadwaj1098 <bharadwaj.reddy98@gmail.com>"
+
+# Working directory is / by default. We explictly state it here for posterity
+# WORKDIR /
 #install python and upgrade pip
-RUN apt-get install -y python3-pip && pip3 install --upgrade pip
+# RUN apt-get install -y python3-pip
 
 # Move the requirements file into the image
 COPY requirements.txt /tmp/
@@ -58,11 +60,15 @@ RUN pip3 install --trusted-host pypi.python.org -r /tmp/requirements.txt
 # Remove the requirements file - this is no longer needed
 RUN rm /tmp/requirements.txt
 
+COPY ROMS /tmp/
+RUN python3 -m atari_py.import_roms /tmp/ROMS/
+RUN rm -rf /tmp/ROMS
+
 # Create a directory in which we can do our work
-RUN mkdir /home/
+# RUN mkdir /home
 
 # Set it as the working directory
-WORKDIR /home/
+WORKDIR /
 
 # Copy over the start-up script
 ADD startup_script.sh /usr/local/bin/startup_script.sh
