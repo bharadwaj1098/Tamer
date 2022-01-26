@@ -113,6 +113,28 @@ class BufferDeque():
             feedback.append(f)
         return torch.cat(state), torch.stack(action), torch.stack(feedback) 
 
+class CreditAssignment():
+    def __init__(self, dist: scipy.stats.rv_continuous):
+        self.dist = dist
+        
+    def __call__(self, s_start: float, s_end: float, h_start: float) -> float:
+        s_norm_start, s_norm_end = self._normalize(s_start, s_end, h_start)
+        start_cdf = self.dist.cdf(s_norm_start)
+        end_cdf = self.dist.cdf(s_norm_end)
+        return start_cdf - end_cdf
+        
+    def _normalize(self, s_start: float, s_end: float, h_start: float) -> Tuple[float, float]: 
+        s_norm_start =  h_start - s_start
+        s_norm_end = h_start - s_end
+        return s_norm_start, s_norm_end
+    
+    def show_dist(self, s_start: float, s_end: float, h_start: float):
+        s_norm_start, s_norm_end = self._normalize(s_start, s_end, h_start)
+        x = np.linspace(self.dist.ppf(.01), self.dist.ppf(.99))
+        plt.plot(x, self.dist.pdf(x), 'r-')
+        plt.vlines(s_norm_start,ymin=0, ymax=self.dist.pdf(s_norm_start), color='green')
+        plt.vlines(s_norm_end, ymin=0, ymax=self.dist.pdf(s_norm_end), color='green')
+
 class NetworkController(PyGymCallback):
     def __init__(self, encoder, head, queue, img_dims = (3, 160, 160), ts_len = 0.3, **kwargs):
         super().__init__(**kwargs)
@@ -124,6 +146,10 @@ class NetworkController(PyGymCallback):
         self.dims = 10000
         self.buffer = BufferDeque(self.dims)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.sliding_window = deque()
+
+    def before_episode(self):
+        self.state_start_time = time.time()
 
     def before_set_action(self):
         state = self.env.render(mode='rgb_array').transpose((2,0,1))
@@ -132,22 +158,14 @@ class NetworkController(PyGymCallback):
         resize = T.Compose([T.ToPILImage(),
                             T.Resize((self.img_dims[1:])),
                             T.ToTensor()])
-        self.state_ts = time.time()
+        # self.state_ts = time.time()
         state = resize(state).to(self.device).unsqueeze(0) 
         return state  
     
     def set_action(self):
         self.play.state = self.before_set_action()
         self.network_output = self.head(self.encoder(self.play.state.to(self.device)))
-        self.play.action = np.argmax(self.network_output.detach().numpy())
-        print(f"buffer_len : {len(self.buffer)}, network : {self.network_output}")
-        #print(self.network_output, self.action)
-        fb = self.queue.get()
-        #self.buffer.append([self.play.state, fb, np.amax(self.network_output.detach().numpy())])
-        self.buffer.push([self.play.state, 
-                                torch.argmax(self.network_output), 
-                                torch.tensor(fb, dtype=torch.float32)]
-            )
+        self.play.action = np.argmax(self.network_output.cpu().detach().numpy())
 
     def after_set_action(self):
         batch=64
@@ -171,7 +189,37 @@ class NetworkController(PyGymCallback):
                 L.backward()
                 opt.step()
                 self.loss_list.append(L)
+    
+    # def step(self):
 
+    def after_step(self):
+        self.state_end_time = time.time()
+        print(f"buffer_len : {len(self.buffer)}, network : {self.network_output}")
+        #print(self.network_output, self.action)
+        
+        fb = self.queue.get()
+        # set_trace()
+        #self.buffer.append([self.play.state, fb, np.amax(self.network_output.detach().numpy())])
+        #declare sliding window
+        #hey this state is out of probability distribution 
+        # pop it out 
+        # feedback :- {state, action, fb, weight_when _sampling the mini batch(compute the weights once) }
+        #
+        print(time.time() - self.sliding_window[0][3]) if len(self.sliding_window) > 0 else None 
+        if len(self.sliding_window) >0 and time.time() - self.sliding_window[0][3] > 4:
+            self.sliding_window.popleft()
+            # print('cool')
+
+        self.sliding_window.append((self.state, self.action, fb, self.state_start_time, self.state_end_time))
+        print(len(self.sliding_window))
+        if fb != 0:
+            self.buffer.push([self.play.state, 
+                                torch.argmax(self.network_output), 
+                                torch.tensor(fb, dtype=torch.float32)]
+            )
+            # sliding_w
+        self.state_start_time  = time.time()
+        
     def after_play(self):
         plt.title('Head_Network_Error')
         plt.plot(self.loss_list)
@@ -183,7 +231,7 @@ class FeedbackListener(Process):
         self.video_size = video_size
         self.fb_queue = fb_queue
         
-    def run(self, fps=30):
+    def run(self, fps=60):
         self._init_pygames()
         self.listening = True
         while self.listening:
@@ -232,11 +280,11 @@ def main():
     encoder.load_state_dict(torch.load("auto_encoder/Type_1/encoder.pt", map_location=device))
     
     # Freeze encoder weights
-    '''
+    
     for name, params in encoder.named_parameters():
         params.requires_grad = False
-    '''
-    #opt = torch.optim.Adam(head_net.parameters(), lr=1e-4, weight_decay=1e-1) 
+    
+    # opt = torch.optim.Adam(head_net.parameters(), lr=1e-4, weight_decay=1e-1) 
     
     Feedback_queue = Queue()
 

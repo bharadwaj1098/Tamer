@@ -80,6 +80,7 @@ class PyGymCallback(Callback):
         # from the Pygame queue that we care about. Other callbacks that pop specific 
         # events may want to store the events in a Player class variable for other callbacks
         # to have access to.
+        # print('here in after_step')
         for event in pygame.event.get([pygame.QUIT, pygame.VIDEORESIZE]):
             if event.type == pygame.QUIT:
                 self.play.term = True
@@ -256,7 +257,8 @@ class Player(Process):
         #     raise TypeError(err)
         self._run_event(self._set_action, 'set_action')
         self._run_callback('step')
-
+        self.t += 1
+        
     def _set_action(self):
         self._run_callback('set_action')
     
