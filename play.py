@@ -109,49 +109,6 @@ class PyGymCallback(Callback):
     def after_play(self):
         pygame.quit()
 
-class NetworkController(PyGymCallback):
-    def __init__(self, encoder, head, queue, img_dims = (3, 160, 160), ts_len = 0.3, **kwargs):
-        super().__init__(**kwargs)
-        self.encoder = encoder
-        self.head = head
-        self.queue = queue 
-        self.img_dims = img_dims
-        self.ts_len = ts_len
-        self.buffer = []
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    def before_set_action(self):
-        state = self.env.render(mode='rgb_array').transpose((2,0,1))
-        state = np.ascontiguousarray(state, dtype = np.float32)/255
-        state = torch.from_numpy(state)
-        resize = T.Compose([T.ToPILImage(),
-                            T.Resize((self.img_dims[1:])),
-                            T.ToTensor()])
-        self.state_ts = time.time()
-        state = resize(state).to(self.device).unsqueeze(0) 
-        return state  
-    
-    def set_action(self):
-        self.play.state = self.before_set_action()
-        self.network_output = self.head(self.encoder(self.play.state.to(self.device)))
-        self.action = np.argmax(self.network_output.detach().numpy())
-        self.play.action = self.action
-
-        fb = self.queue.get()
-        if  fb != 0:
-            self.buffer.append([self.play.state, fb, np.amax(self.network_output.detach().numpy())])
-
-    def after_set_action(self):
-        '''
-        should sample over buffer and perform SGD\
-            but, how to update the weights of Head_network ?
-        '''
-        if len(self.buffer) > 10:
-            print('working')
-            for i in self.buffer:
-                kk = f"state_shape : {i[0].shape} feedback : {i[1]} network_output : {i[2]}"
-                print(kk)
-
 class PyControllerCallback(PyGymCallback): 
     def __init__(self, keys_to_action=None, **kwargs):
         super().__init__(**kwargs)

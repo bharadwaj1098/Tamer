@@ -106,36 +106,37 @@ class BufferDeque():
     def random_sample(self, batch_size):
         rand_idx = np.random.randint(len(self.memory),  size=batch_size)
         rand_batch = [self.memory[i] for i in rand_idx]
-        state, action, feedback =  [], [], []
-        for s, a, f in rand_batch:
+        state, action, feedback, credit =  [], [], [], []
+        for s, a, f, c in rand_batch:
             state.append(s)
             action.append(a)
             feedback.append(f)
-        return torch.cat(state), torch.stack(action), torch.stack(feedback) 
-
-class CreditAssignment():
-    def __init__(self, dist: scipy.stats.rv_continuous):
-        self.dist = dist
-        
-    def __call__(self, s_start: float, s_end: float, h_start: float) -> float:
-        s_norm_start, s_norm_end = self._normalize(s_start, s_end, h_start)
-        start_cdf = self.dist.cdf(s_norm_start)
-        end_cdf = self.dist.cdf(s_norm_end)
-        return start_cdf - end_cdf
-        
-    def _normalize(self, s_start: float, s_end: float, h_start: float) -> Tuple[float, float]: 
-        s_norm_start =  h_start - s_start
-        s_norm_end = h_start - s_end
-        return s_norm_start, s_norm_end
-    
-    def show_dist(self, s_start: float, s_end: float, h_start: float):
-        s_norm_start, s_norm_end = self._normalize(s_start, s_end, h_start)
-        x = np.linspace(self.dist.ppf(.01), self.dist.ppf(.99))
-        plt.plot(x, self.dist.pdf(x), 'r-')
-        plt.vlines(s_norm_start,ymin=0, ymax=self.dist.pdf(s_norm_start), color='green')
-        plt.vlines(s_norm_end, ymin=0, ymax=self.dist.pdf(s_norm_end), color='green')
+            credit.append(c)
+        print(feedback)
+        print(credit)
+        return \
+             torch.cat(state), \
+            torch.stack(action), \
+                torch.stack(feedback) \
+                    , torch.stack(credit)
 
 class NetworkController(PyGymCallback):
+    '''
+    state_start_time :- state start time is collected before step in before_step()
+    state_end_time :- state end time is collected after the step in after_step()
+    h_time :- time at which the feedback is recorded, which comes along with the feedback in a list in after_step function
+    
+    questions:-
+        1. why random sample the credit?
+        2. Are my assumptons about start and end of state time correct?
+        3. Why perform the backward function in both after_set_action() and after_set() [as per psuedo code] isn't
+            performing it in after_set_action() enough ?
+        4. Not able to get the torch.stack(credit) to work in buffer.random_sample() ? 
+
+    Yet-To-Do:-
+
+    adding backward function
+    '''
     def __init__(self, encoder, head, queue, img_dims = (3, 160, 160), ts_len = 0.3, **kwargs):
         super().__init__(**kwargs)
         self.encoder = encoder
@@ -147,8 +148,9 @@ class NetworkController(PyGymCallback):
         self.buffer = BufferDeque(self.dims)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.sliding_window = deque()
+        self.opt = optim.Adam(list(self.head.parameters()), lr=1e-4, weight_decay = 1e-1 )
 
-    def before_episode(self):
+    def before_step(self):
         self.state_start_time = time.time()
 
     def before_set_action(self):
@@ -158,26 +160,31 @@ class NetworkController(PyGymCallback):
         resize = T.Compose([T.ToPILImage(),
                             T.Resize((self.img_dims[1:])),
                             T.ToTensor()])
-        # self.state_ts = time.time()
         state = resize(state).to(self.device).unsqueeze(0) 
         return state  
     
     def set_action(self):
         self.play.state = self.before_set_action()
         self.network_output = self.head(self.encoder(self.play.state.to(self.device)))
-        self.play.action = np.argmax(self.network_output.cpu().detach().numpy())
+        # self.play.action = np.argmax(self.network_output.cpu().detach().numpy())
+        self.play.action = torch.argmax(self.network_output)#.cpu().detach().numpy())
 
     def after_set_action(self):
         batch=64
-        opt = optim.Adam(list(self.head.parameters()), lr=1e-4, weight_decay = 1e-1 )
         loss_fn = nn.MSELoss(reduction = 'mean') 
         self.loss_list = []
         #only when buffer has 50 feedbacks
-        if len(self.buffer) > 50:      
+        # print(self.t)
+        # if len(self.buffer) > 1:
+        #     state, action, feedback, credit = self.buffer.random_sample(batch)
+        if len(self.buffer) > 1:
+            state, action, feedback = self.buffer.random_sample(batch)
+            # print(feedback)
+        '''if len(self.buffer) > 50:      
             # Only train every certain number of steps
             if self.t % 16 == 0: 
                 #rand_batch = np.random.randint(len(self.buffer), size=batch_size) 
-                state, action, feedback = self.buffer.random_sample(batch)
+                state, action, feedback, credit = self.buffer.random_sample(batch)
                 network_output = self.head(self.encoder(state.to(self.device)))
 
                 output = []
@@ -185,41 +192,45 @@ class NetworkController(PyGymCallback):
                     output.append(network_output[i, a])
                 output = torch.tensor(output, dtype=torch.float32, requires_grad=True)
                 L = loss_fn(output, feedback)
-                opt.zero_grad() 
+                self.opt.zero_grad() 
                 L.backward()
-                opt.step()
-                self.loss_list.append(L)
+                self.opt.step()
+                self.loss_list.append(L)'''
     
-    # def step(self):
-
     def after_step(self):
         self.state_end_time = time.time()
-        print(f"buffer_len : {len(self.buffer)}, network : {self.network_output}")
-        #print(self.network_output, self.action)
-        
-        fb = self.queue.get()
-        # set_trace()
-        #self.buffer.append([self.play.state, fb, np.amax(self.network_output.detach().numpy())])
-        #declare sliding window
-        #hey this state is out of probability distribution 
-        # pop it out 
-        # feedback :- {state, action, fb, weight_when _sampling the mini batch(compute the weights once) }
-        #
-        print(time.time() - self.sliding_window[0][3]) if len(self.sliding_window) > 0 else None 
-        if len(self.sliding_window) >0 and time.time() - self.sliding_window[0][3] > 4:
-            self.sliding_window.popleft()
-            # print('cool')
-
-        self.sliding_window.append((self.state, self.action, fb, self.state_start_time, self.state_end_time))
-        print(len(self.sliding_window))
-        if fb != 0:
-            self.buffer.push([self.play.state, 
-                                torch.argmax(self.network_output), 
-                                torch.tensor(fb, dtype=torch.float32)]
+        fb_dict = self.queue.get()
+        fb = torch.tensor(fb_dict["feedback"]).to(self.device)
+        h_time = fb_dict["h_time"]
+        self.sliding_window.append(
+            dict(
+                state = self.state, 
+                action = self.action, 
+                feedback = fb, 
+                s_start = self.state_start_time, 
+                s_end = self.state_end_time
             )
-            # sliding_w
-        self.state_start_time  = time.time()
-        
+        )
+
+        if fb != 0:
+            ca = CreditAssignment(uniform(0.2, 0.8))
+            state, action, credit = [], [], []
+            for win in self.sliding_window:
+                credit_for_state = ca(s_start=win["s_start"], s_end=win["s_end"], h_start=h_time)
+                if credit_for_state !=0:
+                    state.append(win['state'])
+                    action.append(win['action'])
+                    credit.append(torch.tensor(credit_for_state, dtype=torch.float32).to(self.device)) 
+                    self.buffer.push([
+                        win['state'], 
+                        win['action'],
+                        fb,
+                        credit 
+                    ])
+            # print(fb)
+            # print(credit[1].dtype)
+            # print(action[1].dtype)
+
     def after_play(self):
         plt.title('Head_Network_Error')
         plt.plot(self.loss_list)
@@ -239,7 +250,11 @@ class FeedbackListener(Process):
             self._update_screen(fill)
             #add feedback to queue is feeback =! 0
             self.clock.tick(fps)
-            self.fb_queue.put(fb)
+            self.fb_queue.put(
+                dict(
+                    feedback = fb,
+                    h_time = time.time()
+                ))
 
     def _init_pygames(self):
         pygame.init()
