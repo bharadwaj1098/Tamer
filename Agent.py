@@ -112,13 +112,8 @@ class BufferDeque():
             action.append(a)
             feedback.append(f)
             credit.append(c)
-        print(feedback)
-        print(credit)
-        return \
-             torch.cat(state), \
-            torch.stack(action), \
-                torch.stack(feedback) \
-                    , torch.stack(credit)
+
+        return torch.cat(state), torch.tensor(action), torch.tensor(feedback), torch.tensor(credit)
 
 class NetworkController(PyGymCallback):
     '''
@@ -148,7 +143,25 @@ class NetworkController(PyGymCallback):
         self.buffer = BufferDeque(self.dims)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.sliding_window = deque()
-        self.opt = optim.Adam(list(self.head.parameters()), lr=1e-4, weight_decay = 1e-1 )
+        self.opt = optim.Adam(list(self.head.parameters()), lr=1e-1, weight_decay = 1e-1 )
+
+    def backward(self, state, action, feedback, credit):
+        state = state.to(self.device)
+        credit = credit.to(self.device)
+        feedback = feedback.to(self.device)
+        action = action.to(self.device)
+
+        self.loss_list = []
+        h_hat = self.head(self.encoder(state))
+        h_hat_s_a = h_hat[:, action]
+        # h_hat_s_a.requires_grad = True
+        L = torch.mean(credit*(h_hat_s_a - feedback)**2)
+        self.opt.zero_grad() 
+        L.backward()
+        self.opt.step()
+        self.loss_list.append(L)
+        # print(f"feedback : {feedback}")
+        # print(f"loss: {L}, q_values: {h_hat}")
 
     def before_step(self):
         self.state_start_time = time.time()
@@ -172,35 +185,20 @@ class NetworkController(PyGymCallback):
     def after_set_action(self):
         batch=64
         loss_fn = nn.MSELoss(reduction = 'mean') 
-        self.loss_list = []
         #only when buffer has 50 feedbacks
-        # print(self.t)
-        # if len(self.buffer) > 1:
-        #     state, action, feedback, credit = self.buffer.random_sample(batch)
-        if len(self.buffer) > 1:
-            state, action, feedback = self.buffer.random_sample(batch)
-            # print(feedback)
-        '''if len(self.buffer) > 50:      
+       
+        if len(self.buffer) > 50:      
             # Only train every certain number of steps
             if self.t % 16 == 0: 
                 #rand_batch = np.random.randint(len(self.buffer), size=batch_size) 
                 state, action, feedback, credit = self.buffer.random_sample(batch)
-                network_output = self.head(self.encoder(state.to(self.device)))
-
-                output = []
-                for i, a in enumerate(action):
-                    output.append(network_output[i, a])
-                output = torch.tensor(output, dtype=torch.float32, requires_grad=True)
-                L = loss_fn(output, feedback)
-                self.opt.zero_grad() 
-                L.backward()
-                self.opt.step()
-                self.loss_list.append(L)'''
+                self.backward( state, action, feedback, credit) 
     
     def after_step(self):
         self.state_end_time = time.time()
         fb_dict = self.queue.get()
-        fb = torch.tensor(fb_dict["feedback"]).to(self.device)
+        # fb = torch.tensor(fb_dict["feedback"]).to(self.device)
+        fb = fb_dict['feedback']
         h_time = fb_dict["h_time"]
         self.sliding_window.append(
             dict(
@@ -220,16 +218,19 @@ class NetworkController(PyGymCallback):
                 if credit_for_state !=0:
                     state.append(win['state'])
                     action.append(win['action'])
-                    credit.append(torch.tensor(credit_for_state, dtype=torch.float32).to(self.device)) 
+                    # credit.append(torch.tensor(credit_for_state, dtype=torch.float32).to(self.device))
+                    credit.append(credit_for_state) 
                     self.buffer.push([
                         win['state'], 
                         win['action'],
                         fb,
-                        credit 
+                        credit_for_state
+                        # torch.Tensor(credit) 
                     ])
-            # print(fb)
-            # print(credit[1].dtype)
-            # print(action[1].dtype)
+
+            state, action, credit = torch.cat(state), torch.tensor(action), torch.tensor(credit)
+            feedback = torch.full(credit.size(), fb)
+            self.backward( state, action, feedback, credit)
 
     def after_play(self):
         plt.title('Head_Network_Error')
@@ -288,7 +289,6 @@ class FeedbackListener(Process):
 def main():
     env = gym.make("Bowling-v0").unwrapped 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    num_episodes = 1
 
     encoder = Encoder().to(device)
     head_net = Head().to(device) 
@@ -307,7 +307,7 @@ def main():
     listener.start()
     player = Player(callbacks=[NetworkController(encoder= encoder, head=head_net, queue=Feedback_queue,
                                                     env=env, zoom=4, fps=60, human=True)]) #pass the queue
-    player.play()
+    player.play(n_episodes = 1)
     listener.join()
     
 
